@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Invoice - Sachetan Packaging</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        @media print {
+            body { background: white; margin: 0; padding: 0; }
+            .no-print { display: none !important; }
+            .shadow-xl { box-shadow: none !important; }
+            .max-w-3xl { max-width: 100% !important; margin: 0 !important; }
+            .bg-gray-100 { background: white !important; }
+            #invoice { border: none; }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-4 md:p-8">
+
+    <div class="max-w-3xl mx-auto bg-white rounded-lg shadow-xl overflow-hidden" id="invoice">
+        <!-- Header -->
+        <div class="bg-slate-900 text-white p-8 flex justify-between items-center">
+            <div>
+                <h1 class="text-3xl font-bold tracking-wider">INVOICE</h1>
+                <p class="text-slate-300 mt-1 text-sm">Sachetan Packaging</p>
+            </div>
+            <div class="text-right">
+                <h2 class="font-bold text-xl">Sachetan Packaging</h2>
+                <p class="text-xs text-slate-300">Quality Packaging Solutions</p>
+                <!-- If you have a logo URL, replace the text above with: <img src="/payment/logo" class="h-12 bg-white rounded p-1"> -->
+            </div>
+        </div>
+
+        <!-- Info Grid -->
+        <div class="p-8 border-b border-gray-200">
+            <div class="flex flex-col md:flex-row justify-between gap-6">
+                <div>
+                    <h2 class="text-gray-500 font-semibold text-xs uppercase tracking-wide mb-2">Billed To</h2>
+                    <p class="font-bold text-gray-800 text-lg" id="customer-name">Valued Customer</p>
+                    <p class="text-gray-600 text-sm" id="customer-address">...</p>
+                    <p class="text-gray-600 text-sm mt-1" id="customer-phone">Loading...</p>
+                </div>
+                <div class="text-left md:text-right space-y-2">
+                    <div>
+                        <span class="text-gray-500 font-semibold text-xs uppercase block md:inline-block md:mr-2">Invoice No:</span>
+                        <span class="font-bold text-gray-800" id="invoice-no">...</span>
+                    </div>
+                    <div>
+                        <span class="text-gray-500 font-semibold text-xs uppercase block md:inline-block md:mr-2">Date:</span>
+                        <span class="font-bold text-gray-800" id="invoice-date">...</span>
+                    </div>
+                     <div>
+                        <span class="text-gray-500 font-semibold text-xs uppercase block md:inline-block md:mr-2">Order ID:</span>
+                        <span class="font-mono text-gray-800 text-sm" id="order-id">...</span>
+                    </div>
+                     <div>
+                        <span class="text-gray-500 font-semibold text-xs uppercase block md:inline-block md:mr-2">Status:</span>
+                        <span class="font-bold text-green-600 uppercase text-sm" id="status">...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Items -->
+        <div class="p-8">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="border-b-2 border-gray-100 text-gray-500 text-xs uppercase tracking-wider">
+                        <th class="py-3">Description</th>
+                        <th class="py-3 text-right">Qty</th>
+                        <th class="py-3 text-right">Price</th>
+                        <th class="py-3 text-right">Amount</th>
+                    </tr>
+                </thead>
+                <tbody id="items-list" class="text-gray-700 text-sm">
+                    <!-- Items go here -->
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Total -->
+        <div class="p-8 bg-gray-50 border-t border-gray-200">
+            <div class="flex justify-end">
+                <div class="w-full md:w-1/2 space-y-3">
+                    <div class="flex justify-between text-gray-600">
+                        <span>Subtotal</span>
+                        <span class="font-medium" id="subtotal">₹0</span>
+                    </div>
+                    <div class="flex justify-between py-4 border-t border-gray-200">
+                        <span class="font-bold text-xl text-gray-800">Total</span>
+                        <span class="font-bold text-xl text-indigo-600" id="total">₹0</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="p-8 text-center text-gray-500 text-xs border-t border-gray-200">
+            <p class="mb-2">Thank you for your business!</p>
+            <p>If you have any questions about this invoice, please contact support.</p>
+        </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="max-w-3xl mx-auto mt-8 mb-12 text-center no-print space-y-4">
+        <button onclick="window.print()" class="bg-slate-900 text-white px-6 py-3 rounded-lg shadow-lg hover:bg-slate-800 transition flex items-center justify-center mx-auto gap-2">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+            Download / Print PDF
+        </button>
+        <p class="text-gray-500 text-sm">To save as PDF, click print and select "Save as PDF" as the destination.</p>
+    </div>
+
+    <script>
+        const orderId = window.location.pathname.split('/').pop();
+        
+        async function loadReceipt() {
+            try {
+                const res = await fetch(`/payment/product/order/${orderId}`);
+                if (!res.ok) throw new Error("Failed to load");
+                const data = await res.json();
+                renderReceipt(data);
+            } catch (e) {
+                document.getElementById('invoice').innerHTML = `<div class="p-12 text-center text-red-500">Unable to load invoice details. Please try again later.</div>`;
+            }
+        }
+
+        function renderReceipt(data) {
+            // Header Info
+            document.getElementById('invoice-no').innerText = data.invoiceNumber || 'PENDING';
+            document.getElementById('invoice-date').innerText = new Date(data.createdAt).toLocaleDateString();
+            document.getElementById('order-id').innerText = data.orderId || data.id;
+            document.getElementById('status').innerText = data.status;
+            document.getElementById('customer-phone').innerText = `WhatsApp: ${data.whatsapp || 'N/A'}`;
+            
+            if (data.customerName) {
+                document.getElementById('customer-name').innerText = data.customerName;
+            }
+            if (data.address) {
+                let addr = data.address;
+                if (data.pincode) addr += `, ${data.pincode}`;
+                document.getElementById('customer-address').innerText = addr;
+            }
+
+            // Items
+            const itemsContainer = document.getElementById('items-list');
+            let itemsHtml = '';
+            
+            data.items.forEach(item => {
+                const specs = [];
+                if (item.size) specs.push(`Size: ${item.size}`);
+                if (item.color) specs.push(`Color: ${item.color}`);
+                if (item.dimensions) specs.push(`Dim: ${item.dimensions}`);
+                if (item.weight) specs.push(`Wt: ${item.weight}`);
+                
+                const specString = specs.length > 0 ? `<div class="text-xs text-gray-500 mt-1">${specs.join(' | ')}</div>` : '';
+
+                itemsHtml += `
+                    <tr class="border-b border-gray-50 hover:bg-gray-50 transition">
+                        <td class="py-4 pr-4">
+                            <div class="font-medium text-gray-800">${item.name}</div>
+                            ${specString}
+                        </td>
+                        <td class="py-4 text-right font-mono">${item.quantity}</td>
+                        <td class="py-4 text-right font-mono">₹${item.price || (item.total/item.quantity).toFixed(2)}</td>
+                        <td class="py-4 text-right font-bold text-gray-800">₹${item.total}</td>
+                    </tr>
+                `;
+            });
+            
+            itemsContainer.innerHTML = itemsHtml;
+
+            // Totals
+            document.getElementById('subtotal').innerText = `₹${data.totalAmount}`;
+            document.getElementById('total').innerText = `₹${data.totalAmount}`;
+        }
+
+        loadReceipt();
+    </script>
+</body>
+</html>

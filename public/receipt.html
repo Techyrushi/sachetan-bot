@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NashikPicklers - Booking Receipt</title>
+  <link rel="shortcut icon" href="/payment/favicon">
+
+  <!-- SweetAlert2 -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11.0.19/dist/sweetalert2.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.0.19/dist/sweetalert2.all.min.js"></script>
+
+  <style>
+    :root {
+      --primary: #4caf50;
+      --whatsapp: #25d366;
+      --bg: #f2f4f7;
+      --card-bg: #ffffffcc;
+      --text: #222;
+      --muted: #666;
+    }
+
+    body {
+      font-family: "Poppins", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #dfffd6, #c8f7c5, #f8fff8);
+      color: var(--text);
+      margin: 0;
+      padding: 15px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+
+    .container {
+      background: var(--card-bg);
+      backdrop-filter: blur(10px);
+      border-radius: 16px;
+      box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+      max-width: 750px;
+      width: 100%;
+      padding: 20px 25px;
+      animation: fadeIn 0.4s ease-in-out;
+    }
+
+    .logo {
+      text-align: center;
+      margin-bottom: 5px;
+    }
+
+    .logos {
+      width: 80px;
+      display: block;
+      margin: 0 auto 12px;
+    }
+
+    .logo h2 {
+      font-size: 30px;
+      font-weight: 700;
+      color: var(--primary);
+      margin: 0;
+    }
+
+    h1 {
+      text-align: center;
+      color: #333;
+      font-size: 1.6rem;
+      margin-top: 10px;
+      margin-bottom: 25px;
+    }
+
+    .receipt {
+      background: #fff;
+      border-radius: 12px;
+      padding: 18px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    }
+
+    .receipt-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 2px solid #eee;
+      padding-bottom: 10px;
+      margin-bottom: 15px;
+      flex-wrap: wrap;
+    }
+
+    .receipt-header h2 {
+      color: var(--primary);
+      font-size: 1.2rem;
+      margin: 0;
+    }
+
+    .invoice-number {
+      font-weight: bold;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .receipt-content {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+
+    .receipt-details {
+      flex: 1;
+      min-width: 220px;
+    }
+
+    .receipt-details p {
+      margin: 6px 0;
+      font-size: 0.95rem;
+    }
+
+    .receipt-details strong {
+      color: #111;
+    }
+
+    .qr-section {
+      text-align: center;
+      min-width: 160px;
+    }
+
+    .qr-section img {
+      max-width: 140px;
+      border: 2px solid #e0e0e0;
+      border-radius: 10px;
+      padding: 5px;
+      transition: transform 0.3s;
+    }
+
+    .qr-section img:hover {
+      transform: scale(1.05);
+    }
+
+    .thankyou {
+      text-align: center;
+      font-size: 0.9rem;
+      color: var(--muted);
+      margin-top: 15px;
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 18px;
+    }
+
+    .btn {
+      flex: 1;
+      padding: 12px;
+      border: none;
+      border-radius: 8px;
+      color: #fff;
+      font-weight: 600;
+      font-size: 16px;
+      text-align: center;
+      text-decoration: none;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      box-shadow: 0 3px 10px rgba(0, 0, 0, 0.1);
+    }
+
+    .btn-print {
+      background: var(--primary);
+    }
+
+    .btn-print:hover {
+      background: #43a047;
+    }
+
+    #whatsapp-button {
+      background-color: var(--whatsapp);
+    }
+
+    #whatsapp-button:hover {
+      background-color: #1ebe5b;
+    }
+
+    .loading {
+      text-align: center;
+      color: var(--muted);
+      padding: 20px;
+    }
+
+    .error {
+      background: #ffebee;
+      color: #c62828;
+      padding: 10px;
+      border-radius: 6px;
+      text-align: center;
+      margin-top: 15px;
+      font-weight: 500;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @media (max-width: 600px) {
+      .container {
+        padding: 15px;
+      }
+
+      h1 {
+        font-size: 1.4rem;
+      }
+
+      .receipt {
+        padding: 12px;
+      }
+
+      .receipt-header h2 {
+        font-size: 1rem;
+      }
+
+      .qr-section img {
+        max-width: 120px;
+      }
+
+      .btn-group {
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <div class="logo">
+      <img src="/payment/logo" alt="NashikPicklers" class="logos" />
+      <h2>NashikPicklers</h2>
+    </div>
+
+    <h1>Booking Receipt</h1>
+
+    <div id="loading" class="loading">
+      <p>Loading receipt details...</p>
+    </div>
+
+    <div id="error" class="error" style="display: none;"></div>
+
+    <div id="receipt" class="receipt" style="display: none;">
+      <div class="receipt-header">
+        <h2>✅ Payment Confirmed</h2>
+        <p id="invoice-number" class="invoice-number"></p>
+      </div>
+
+      <div class="receipt-content">
+        <div class="receipt-details">
+          <p><strong>Booking ID:</strong> <span id="booking-ids"></span></p>
+          <p><strong>Date:</strong> <span id="booking-date"></span></p>
+          <p><strong>Time:</strong> <span id="booking-slot"></span></p>
+          <p><strong>Duration:</strong> <span id="booking-duration"></span></p>
+          <p><strong>Court:</strong> <span id="booking-court"></span></p>
+          <p><strong>Players:</strong> <span id="booking-player"></span></p>
+          <p><strong>Amount:</strong> ₹<span id="booking-amount"></span></p>
+          <p>
+            <strong>Payment Status:</strong>
+            <span style="color: green; font-weight: bold;">PAID</span>
+          </p>
+          <p><strong>Payment ID:</strong> <span id="payment-id"></span></p>
+          <p><strong>Booked On:</strong> <span id="booking-created"></span></p>
+        </div>
+
+        <div class="qr-section">
+          <p><strong>Check-in QR Code</strong></p>
+          <div id="qr-code"></div>
+          <p style="font-size: 12px; margin-top: 8px;">
+            Scan this code at the court
+          </p>
+        </div>
+      </div>
+
+      <p class="thankyou">🎾 Thank you for booking with NashikPicklers!</p>
+    </div>
+
+    <div class="btn-group">
+      <a href="#" id="whatsapp-button" class="btn">Continue on WhatsApp</a>
+      <button class="btn btn-print" onclick="window.print()">🖨️ Print Receipt</button>
+    </div>
+  </div>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      const pathParts = window.location.pathname.split("/");
+      const bookingId = pathParts[pathParts.length - 1];
+
+      if (!bookingId) {
+        showError("No booking ID provided");
+        return;
+      }
+
+      fetch(`/payment/receipt-data/${bookingId}`)
+        .then((response) => {
+          if (!response.ok) throw new Error("Failed to fetch receipt data");
+          return response.json();
+        })
+        .then((data) => {
+          if (data.error) throw new Error(data.error);
+
+          // document.getElementById("booking-id").textContent = data.id;
+          document.getElementById("booking-ids").textContent = data.bookingId;
+          document.getElementById("booking-date").textContent = data.date;
+          document.getElementById("booking-slot").textContent = data.slot;
+          document.getElementById("booking-court").textContent = data.court;
+          document.getElementById("booking-player").textContent = data.player;
+          document.getElementById("booking-duration").textContent = data.duration;
+          document.getElementById("booking-amount").textContent = data.amount;
+          document.getElementById("payment-id").textContent =
+            data.paymentId || "N/A";
+          document.getElementById("booking-created").textContent = new Date(
+            data.createdAt
+          ).toLocaleString();
+
+          const urlParams = new URLSearchParams(window.location.search);
+          const invoiceParam = urlParams.get("invoice");
+          const invoiceNumber =
+            data.invoiceNumber ||
+            invoiceParam ||
+            "INV-" + Date.now().toString().substring(7);
+          document.getElementById("invoice-number").textContent =
+            "Invoice #" + invoiceNumber;
+
+          const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(
+            data.id
+          )}`;
+          const qrImg = document.createElement("img");
+          qrImg.src = qrCodeUrl;
+          qrImg.alt = "Check-in QR Code";
+          document.getElementById("qr-code").appendChild(qrImg);
+
+          document.getElementById("loading").style.display = "none";
+          document.getElementById("receipt").style.display = "block";
+
+          const whatsappButton = document.getElementById("whatsapp-button");
+          whatsappButton.href = `https://wa.me/+14155238886?text=Thank you for confirming my booking.`;
+        })
+        .catch((error) => {
+          showError(error.message || "Failed to load receipt");
+        });
+    });
+
+    function showError(message) {
+      document.getElementById("loading").style.display = "none";
+      const errorElement = document.getElementById("error");
+      errorElement.textContent = message;
+      errorElement.style.display = "block";
+      document.getElementById("whatsapp-button").style.display = "block";
+    }
+  </script>
+</body>
+
+</html>

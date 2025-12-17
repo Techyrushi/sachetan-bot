@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NashikPicklers QR Scanner</title>
+    <link rel="shortcut icon" href="/payment/favicon">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+
+    <style>
+        :root {
+            --primary: #00bfa5;
+            /* teal */
+            --primary-dark: #00897b;
+            --accent: #64ffda;
+            /* neon aqua */
+            --light: #f5f5f5;
+            --dark: #0f172a;
+            --glass-bg: rgba(255, 255, 255, 0.12);
+            --border: rgba(255, 255, 255, 0.2);
+            --shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+            --font: 'Poppins', sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+            transition: all 0.3s ease;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: var(--font);
+            background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            color: var(--light);
+        }
+
+        .container {
+            width: 100%;
+            max-width: 600px;
+            margin: 20px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(14px);
+            border-radius: 20px;
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, var(--primary-dark), var(--primary));
+            color: white;
+            text-align: center;
+            padding: 32px 20px;
+            position: relative;
+        }
+
+        .header::after {
+            content: "";
+            position: absolute;
+            bottom: -1px;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background: linear-gradient(90deg, var(--accent), transparent);
+        }
+
+        .header img {
+            width: 90px;
+            height: 90px;
+            margin-bottom: 12px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 8px;
+            box-shadow: 0 4px 10px rgba(0, 255, 255, 0.3);
+        }
+
+        .header h1 {
+            font-size: 24px;
+            margin: 8px 0 6px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+
+        .header p {
+            font-size: 14px;
+            opacity: 0.9;
+            margin: 0;
+        }
+
+        .scanner-container {
+            padding: 24px 20px;
+            text-align: center;
+        }
+
+        #scanner-area {
+            width: 100%;
+            max-width: 320px;
+            height: 320px;
+            margin: 0 auto 20px;
+            border-radius: 16px;
+            border: 2px solid var(--accent);
+            overflow: hidden;
+            position: relative;
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.3);
+        }
+
+        #scanner-area video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .scanner-overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .scanner-target {
+            width: 200px;
+            height: 200px;
+            border: 2px dashed var(--accent);
+            border-radius: 10px;
+            position: relative;
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.2);
+        }
+
+        .scanner-line {
+            position: absolute;
+            width: 100%;
+            height: 2px;
+            background-color: var(--accent);
+            animation: scan 2s ease-in-out infinite;
+            box-shadow: 0 0 10px var(--accent);
+        }
+
+        @keyframes scan {
+            0% {
+                top: 10%;
+            }
+
+            50% {
+                top: 90%;
+            }
+
+            100% {
+                top: 10%;
+            }
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .btn {
+            padding: 12px 22px;
+            border: none;
+            border-radius: 10px;
+            font-size: 15px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            justify-content: center;
+            transition: 0.3s;
+            font-weight: 500;
+        }
+
+        .btn-primary {
+            background: linear-gradient(90deg, var(--primary), var(--accent));
+            color: var(--dark);
+            box-shadow: 0 0 12px rgba(0, 255, 255, 0.3);
+        }
+
+        .btn-outline {
+            background: transparent;
+            border: 2px solid var(--accent);
+            color: var(--accent);
+        }
+
+        .btn:hover:not(:disabled) {
+            transform: translateY(-3px) scale(1.02);
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.4);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .manual-input {
+            margin: 24px 0;
+        }
+
+        .manual-input input {
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            width: 80%;
+            max-width: 320px;
+            font-size: 16px;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            text-align: center;
+        }
+
+        .manual-input input::placeholder {
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        .loading i {
+            font-size: 30px;
+            margin-bottom: 10px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            from {
+                transform: rotate(0deg);
+            }
+
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .error-message,
+        .success-message {
+            display: none;
+            font-weight: 500;
+            margin: 16px 0;
+            font-size: 15px;
+        }
+
+        .error-message {
+            color: #ff5252;
+        }
+
+        .success-message {
+            color: var(--accent);
+        }
+
+        .booking-details {
+            display: none;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+            margin: 0 16px 24px;
+            box-shadow: var(--shadow);
+            color: #fff;
+        }
+
+        .booking-details h3 {
+            margin-bottom: 10px;
+            text-align: center;
+            color: var(--accent);
+        }
+
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px dashed rgba(255, 255, 255, 0.2);
+            font-size: 15px;
+        }
+
+        .status-badge {
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: capitalize;
+        }
+
+        .status-badge.confirmed {
+            background: rgba(46, 125, 50, 0.2);
+            color: #4caf50;
+        }
+
+        .status-badge.pending {
+            background: rgba(255, 143, 0, 0.2);
+            color: #ffb74d;
+        }
+
+        .status-badge.cancelled {
+            background: rgba(198, 40, 40, 0.2);
+            color: #ef5350;
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+            justify-content: center;
+        }
+
+        .already-checked-in {
+            background-color: #e8f5e9;
+            color: #2e7d32;
+            padding: 10px 15px;
+            border-radius: 5px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            border: 1px solid #a5d6a7;
+        }
+
+        @media (max-width: 480px) {
+            .header h1 {
+                font-size: 20px;
+            }
+
+            .btn {
+                font-size: 14px;
+                padding: 10px 14px;
+            }
+
+            #scanner-area {
+                height: 260px;
+                max-width: 260px;
+            }
+
+            .manual-input input {
+                width: 90%;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <img src="/payment/logo" alt="NashikPicklers Logo">
+            <h1>NashikPicklers QR Scanner</h1>
+            <p>Quickly scan player booking QR codes</p>
+        </div>
+
+        <div class="scanner-container">
+            <div id="scanner-area">
+                <video id="scanner-video" playsinline></video>
+                <div class="scanner-overlay">
+                    <div class="scanner-target">
+                        <div class="scanner-line"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="controls">
+                <button id="start-scan" class="btn btn-primary"><i class="fas fa-camera"></i> Start Scanner</button>
+                <button id="stop-scan" class="btn btn-outline" disabled><i class="fas fa-stop"></i> Stop</button>
+            </div>
+
+            <div class="manual-input">
+                <input type="text" id="booking-id-input" placeholder="Enter Booking ID">
+                <button id="submit-id" class="btn btn-primary"
+                    style="margin-top: 14px; display: block; width: 120px; margin-left: auto; margin-right: auto; white-space: nowrap;"><i
+                        class="fas fa-search"></i> Search</button>
+            </div>
+
+            <div id="loading" class="loading">
+                <i class="fas fa-circle-notch"></i>
+                <p>Fetching booking details...</p>
+            </div>
+
+            <div id="error-message" class="error-message"></div>
+            <div id="success-message" class="success-message"></div>
+
+            <div id="booking-details" class="booking-details"></div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const startScanBtn = document.getElementById('start-scan');
+            const stopScanBtn = document.getElementById('stop-scan');
+            const submitIdBtn = document.getElementById('submit-id');
+            const bookingIdInput = document.getElementById('booking-id-input');
+            const scannerVideo = document.getElementById('scanner-video');
+            const errorMessage = document.getElementById('error-message');
+            const successMessage = document.getElementById('success-message');
+            const loadingElement = document.getElementById('loading');
+            const bookingDetailsElement = document.getElementById('booking-details');
+
+            let videoStream = null;
+            let scanning = false;
+            let canvasElement = document.createElement('canvas');
+            let canvas = canvasElement.getContext('2d');
+
+            // Start scanner
+            startScanBtn.addEventListener('click', startScanner);
+
+            // Stop scanner
+            stopScanBtn.addEventListener('click', stopScanner);
+
+            // Manual lookup
+            submitIdBtn.addEventListener('click', function () {
+                const bookingId = bookingIdInput.value.trim();
+                if (bookingId) {
+                    fetchBookingDetails(bookingId);
+                } else {
+                    showError('Please enter a booking ID');
+                }
+            });
+
+            function startScanner() {
+                if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                    navigator.mediaDevices.getUserMedia({
+                        video: {
+                            facingMode: "environment",
+                            width: { ideal: 1280 },
+                            height: { ideal: 720 }
+                        }
+                    })
+                        .then(function (stream) {
+                            videoStream = stream;
+                            scannerVideo.srcObject = stream;
+                            scannerVideo.setAttribute('playsinline', true);
+                            scannerVideo.play();
+
+                            startScanBtn.disabled = true;
+                            stopScanBtn.disabled = false;
+                            scanning = true;
+
+                            // Start scanning for QR codes
+                            requestAnimationFrame(scanQRCode);
+                        })
+                        .catch(function (error) {
+                            console.error('Camera error:', error);
+                            showError('Could not access camera. Please ensure you have granted camera permissions.');
+                        });
+                } else {
+                    showError('Your browser does not support camera access. Try using the manual input instead.');
+                }
+            }
+
+            function stopScanner() {
+                if (videoStream) {
+                    videoStream.getTracks().forEach(track => track.stop());
+                    scannerVideo.srcObject = null;
+                    videoStream = null;
+                }
+
+                startScanBtn.disabled = false;
+                stopScanBtn.disabled = true;
+                scanning = false;
+            }
+
+            function scanQRCode() {
+                if (!scanning) return;
+
+                if (scannerVideo.readyState === scannerVideo.HAVE_ENOUGH_DATA) {
+                    // Set canvas dimensions to match video
+                    canvasElement.height = scannerVideo.videoHeight;
+                    canvasElement.width = scannerVideo.videoWidth;
+
+                    // Draw video frame to canvas
+                    canvas.drawImage(scannerVideo, 0, 0, canvasElement.width, canvasElement.height);
+
+                    // Get image data for QR code scanning
+                    const imageData = canvas.getImageData(0, 0, canvasElement.width, canvasElement.height);
+
+                    // Scan for QR code
+                    const code = jsQR(imageData.data, imageData.width, imageData.height, {
+                        inversionAttempts: "dontInvert",
+                    });
+
+                    if (code) {
+                        // QR code found
+                        console.log('QR Code detected:', code.data);
+
+                        // Stop scanning
+                        stopScanner();
+
+                        // Process the booking ID
+                        fetchBookingDetails(code.data);
+                    }
+                }
+
+                // Continue scanning
+                if (scanning) {
+                    requestAnimationFrame(scanQRCode);
+                }
+            }
+
+            function fetchBookingDetails(bookingId) {
+                // Clear previous results
+                hideError();
+                hideSuccess();
+                bookingDetailsElement.style.display = 'none';
+                loadingElement.style.display = 'block';
+
+                // Fetch booking details
+                fetch(`/payment/booking/${bookingId}`)
+                    .then(res => {
+                        if (!res.ok) {
+                            throw new Error('Booking Details Not Found!');
+                        }
+                        return res.json();
+                    })
+                    .then(booking => {
+                        if (booking.error) {
+                            throw new Error(booking.error);
+                        }
+
+                        displayBookingDetails(booking);
+                        showSuccess('Booking Found!');
+                    })
+                    .catch(err => {
+                        console.error('Error:', err);
+                        showError(err.message || 'Failed to load booking details');
+                    })
+                    .finally(() => {
+                        loadingElement.style.display = 'none';
+                    });
+            }
+
+            function displayBookingDetails(booking) {
+                let statusClass = 'confirmed';
+                if (booking.status === 'pending_payment') statusClass = 'pending';
+                if (booking.status === 'cancelled') statusClass = 'cancelled';
+
+                const detailsHtml = `
+                    <h3>Booking Details</h3>
+                    <div class="detail-row">
+                        <div class="detail-label">Booking ID</div>
+                        <div class="detail-value">${booking.bookingId}</div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Date</div>
+                        <div class="detail-value">${booking.date}</div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Time</div>
+                        <div class="detail-value">${booking.slot}</div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Duartion</div>
+                        <div class="detail-value">${booking.duration}</div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Court</div>
+                        <div class="detail-value">${booking.court}</div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Players</div>
+                        <div class="detail-value">${booking.player}</div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Amount</div>
+                        <div class="detail-value">₹${booking.amount}</div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Status</div>
+                        <div class="detail-value">
+                            <span class="status-badge ${statusClass}">
+                                ${booking.status.charAt(0).toUpperCase() + booking.status.slice(1)}
+                            </span>
+                        </div>
+                    </div>
+                    
+                    <div class="action-buttons">
+                        ${booking.checkedIn
+                        ? `<div class="already-checked-in"><i class="fas fa-check-circle"></i> Already Checked In</div>`
+                        : `<button onclick="checkInPlayer('${booking.id}')" class="btn btn-primary" ${booking.status !== 'confirmed' ? 'disabled' : ''}>
+                                <i class="fas fa-check-circle"></i> Check In
+                               </button>`
+                    }
+                        <button onclick="window.location.reload()" class="btn btn-outline">
+                            <i class="fas fa-redo"></i> Scan Another
+                        </button>
+                    </div>
+                `;
+
+                bookingDetailsElement.innerHTML = detailsHtml;
+                bookingDetailsElement.style.display = 'block';
+            }
+
+            function showError(message) {
+                errorMessage.textContent = message;
+                errorMessage.style.display = 'block';
+                successMessage.style.display = 'none';
+            }
+
+            function hideError() {
+                errorMessage.style.display = 'none';
+            }
+
+            function showSuccess(message) {
+                successMessage.textContent = message;
+                successMessage.style.display = 'block';
+                errorMessage.style.display = 'none';
+
+                // Auto-hide success message after 5 seconds
+                setTimeout(() => {
+                    hideSuccess();
+                }, 5000);
+            }
+
+            function hideSuccess() {
+                successMessage.style.display = 'none';
+            }
+        });
+
+        // Function to handle check-in with backend API
+        function checkInPlayer(bookingId) {
+            // Show loading state with SweetAlert2
+            Swal.fire({
+                title: 'Processing...',
+                text: 'Checking in player',
+                icon: 'info',
+                allowOutsideClick: false,
+                showConfirmButton: false,
+                willOpen: () => {
+                    Swal.showLoading();
+                }
+            });
+
+            // Call the check-in API
+            fetch(`/payment/check-in/${bookingId}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Show success notification with SweetAlert2
+                        Swal.fire({
+                            title: 'Success!',
+                            text: 'Player checked in successfully!',
+                            icon: 'success',
+                            confirmButtonText: 'OK',
+                            confirmButtonColor: '#4CAF50'
+                        });
+
+                        // Update the button to show checked in status
+                        const checkInBtn = document.querySelector('.action-buttons .btn-primary');
+                        if (checkInBtn) {
+                            checkInBtn.parentNode.innerHTML = '<div class="already-checked-in"><i class="fas fa-check-circle"></i> Already Checked In</div>';
+                        }
+
+                        // Play success sound
+                        const audio = new Audio('/sounds/success.mp3');
+                        audio.play().catch(e => console.log('Audio play failed:', e));
+                    } else {
+                        // Show error message with SweetAlert2
+                        Swal.fire({
+                            title: 'Error!',
+                            text: data.error || 'Failed to check in player',
+                            icon: 'error',
+                            confirmButtonText: 'OK',
+                            confirmButtonColor: '#f44336'
+                        });
+
+                        // Reset button
+                        const checkInBtn = document.querySelector('.action-buttons .btn-primary');
+                        if (checkInBtn) {
+                            checkInBtn.disabled = false;
+                            checkInBtn.innerHTML = '<i class="fas fa-check-circle"></i> Check In';
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    // Show error message with SweetAlert2
+                    Swal.fire({
+                        title: 'Error!',
+                        text: 'Network error. Please try again.',
+                        icon: 'error',
+                        confirmButtonText: 'OK',
+                        confirmButtonColor: '#f44336'
+                    });
+
+                    // Reset button
+                    const checkInBtn = document.querySelector('.action-buttons .btn-primary');
+                    if (checkInBtn) {
+                        checkInBtn.disabled = false;
+                        checkInBtn.innerHTML = '<i class="fas fa-check-circle"></i> Check In';
+                    }
+                });
+        }
+    </script>
+</body>
+
+</html>

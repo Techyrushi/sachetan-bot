@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NashikPicklers Payment</title>
+  <link rel="shortcut icon" href="/payment/favicon">
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <!-- SweetAlert2 -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+  <!-- Razorpay -->
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+
+  <style>
+    :root {
+      --primary: #00bfa5;
+      --danger: #ff5252;
+      --bg: #f9fafb;
+      --card: #ffffffc7;
+      --shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+    }
+
+    body {
+      margin: 0;
+      font-family: "Poppins", sans-serif;
+      background: linear-gradient(135deg, #a8edea, #fed6e3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+
+    .container {
+      width: 90%;
+      max-width: 480px;
+      background: var(--card);
+      backdrop-filter: blur(10px);
+      border-radius: 20px;
+      padding: 30px;
+      box-shadow: var(--shadow);
+      animation: fadeIn 0.4s ease;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .logo {
+      width: 80px;
+      display: block;
+      margin: 0 auto 12px;
+    }
+
+    h1 {
+      text-align: center;
+      color: var(--primary);
+      font-size: 1.8rem;
+      margin-bottom: 10px;
+    }
+
+    .booking-details {
+      background: #f7f9fb;
+      padding: 18px;
+      border-radius: 10px;
+      font-size: 15px;
+      margin-top: 18px;
+      box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.05);
+    }
+
+    .booking-details p {
+      margin: 6px 0;
+    }
+
+    .btn {
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: 10px;
+      font-weight: 600;
+      color: #fff;
+      margin-top: 15px;
+      cursor: pointer;
+      transition: 0.25s;
+    }
+
+    .btn:hover {
+      opacity: 0.9;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+    }
+
+    .btn-danger {
+      background: var(--danger);
+    }
+
+    .btn-whatsapp {
+      background: #25d366;
+    }
+
+    footer {
+      margin-top: 25px;
+      text-align: center;
+      font-size: 13px;
+    }
+
+    footer a {
+      color: #444;
+      text-decoration: none;
+      margin: 0 5px;
+    }
+
+    /* Receipt */
+    .receipt {
+      background: #fff;
+      padding: 25px;
+      border-radius: 12px;
+      margin-top: 25px;
+      box-shadow: var(--shadow);
+    }
+
+    .receipt-header {
+      display: flex;
+      flex-direction: column;
+      /* Stack heading and invoice vertically */
+      align-items: center;
+      /* Center align both */
+      gap: 5px;
+      /* Optional spacing between heading and invoice */
+    }
+
+    .receipt h2 {
+      color: var(--primary);
+      margin-bottom: 8px;
+    }
+
+    .qr-section {
+      text-align: center;
+      margin-top: 15px;
+    }
+
+    .qr-section img {
+      width: 130px;
+      border-radius: 8px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <img src="/payment/logo" alt="NashikPicklers" class="logo" />
+    <h1>NashikPicklers Payment</h1>
+
+    <div id="loading">
+      <p>Loading booking details...</p>
+    </div>
+    <div id="booking-details" class="booking-details" style="display: none"></div>
+
+    <button id="pay-button" class="btn btn-primary" style="display: none">
+      Pay Now
+    </button>
+    <button id="cancel-button" class="btn btn-danger" style="display: none">
+      Cancel Booking
+    </button>
+
+    <div id="error-message" style="color: var(--danger); margin-top: 10px; text-align: center;"></div>
+    <div id="receipt" style="display: none"></div>
+
+    <footer>
+      <a href="#" id="privacy-link">Privacy Policy</a> |
+      <a href="#" id="terms-link">Terms & Conditions</a>
+    </footer>
+  </div>
+
+  <script>
+    let currentBooking = null;
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      const params = new URLSearchParams(window.location.search);
+      const bookingId = params.get("booking") || params.get("booking_id");
+
+      if (!bookingId) {
+        document.getElementById("loading").innerHTML =
+          "<p style='color:red;'>No booking ID provided</p>";
+        return;
+      }
+
+      try {
+        const res = await fetch(`/payment/booking/${bookingId}`);
+        const booking = await res.json();
+
+        if (!res.ok || booking.error)
+          throw new Error(booking.error || "Booking not found");
+
+        currentBooking = booking;
+
+        document.getElementById("booking-details").innerHTML = `
+            <p><strong>Booking ID:</strong> ${booking.bookingId}</p>
+            <p><strong>Date:</strong> ${booking.date}</p>
+            <p><strong>Time:</strong> ${booking.slot}</p>
+            <p><strong>Duration:</strong> ${booking.duration}</p>
+            <p><strong>Court:</strong> ${booking.court}</p>
+            <p><strong>Players:</strong> ${booking.player}</p>
+            <p><strong>Amount:</strong> ₹${booking.amount}</p>
+          `;
+
+
+        const bookingDetailsEl = document.getElementById("booking-details");
+        const payButton = document.getElementById("pay-button");
+        const cancelButton = document.getElementById("cancel-button");
+
+        bookingDetailsEl.style.display = "block";
+        document.getElementById("loading").style.display = "none";
+
+        // Hide buttons by default
+        payButton.style.display = "none";
+        cancelButton.style.display = "none";
+
+        // Show booking info or status messages
+        if (booking.status === "pending_payment") {
+          bookingDetailsEl.innerHTML = `
+        <p><strong>Booking ID:</strong> ${booking.bookingId}</p>
+        <p><strong>Date:</strong> ${booking.date}</p>
+        <p><strong>Time:</strong> ${booking.slot}</p>
+        <p><strong>Duration:</strong> ${booking.duration}</p>
+        <p><strong>Court:</strong> ${booking.court}</p>
+        <p><strong>Players:</strong> ${booking.player}</p>
+        <p><strong>Amount:</strong> ₹${booking.amount}</p>
+      `;
+          payButton.style.display = "block";
+          cancelButton.style.display = "block";
+        } else if (booking.status === "confirmed") {
+          Swal.fire("Already Paid!", "This booking is already confirmed.", "info");
+        } else if (booking.status === "expired") {
+          Swal.fire("Payment Link Expired", "Your payment link has expired. Please book again.", "error");
+        } else if (booking.status === "cancelled") {
+          bookingDetailsEl.innerHTML = `
+        <h2 style="color:#ff5252; text-align:center; margin-bottom:10px;">Booking Cancelled</h2>
+        <p style="text-align:center; margin-bottom:10px;">Your booking has been cancelled successfully.</p>
+        <h3 style="text-align:center; margin-bottom:10px; color:green;">Book Again</h3>
+        ${booking.refundAmount ? `<p style="text-align:center; margin-bottom:15px;"><strong>Refund Amount:</strong> ₹${booking.refundAmount}</p>` : ""}
+          <div style="display:flex; justify-content:center; margin-top:20px;">
+        <a href="https://wa.me/?text=Hi"
+          style="
+            background:#25d366;
+            color:#fff;
+            font-weight:600;
+            padding:12px 25px;
+            border-radius:10px;
+            text-decoration:none;
+            font-size:16px;
+            transition:0.3s;
+            display:inline-block;
+          "
+          onmouseover="this.style.background='#1ebe57'; this.style.transform='translateY(-2px)';"
+          onmouseout="this.style.background='#25d366'; this.style.transform='translateY(0)';"
+        >
+          Message on WhatsApp
+        </a>
+      </div>
+      `;
+        }
+
+
+        document
+          .getElementById("pay-button")
+          .addEventListener("click", async () => {
+            try {
+              // Fetch latest booking status from server
+              const res = await fetch(`/payment/booking/${currentBooking.id}`);
+              const latestBooking = await res.json();
+
+              if (!res.ok || latestBooking.error) {
+                throw new Error(latestBooking.error || "Failed to fetch booking");
+              }
+
+              // Check status
+              if (latestBooking.status === "confirmed") {
+                Swal.fire("Already Paid!", "This booking is already confirmed.", "info");
+                return;
+              }
+
+              if (latestBooking.status === "expired") {
+                Swal.fire(
+                  "Payment Link Expired",
+                  "Your payment link has expired. Please book again.",
+                  "error"
+                );
+                return;
+              }
+
+              if (latestBooking.status === "cancelled") {
+                Swal.fire(
+                  "Booking Cancelled",
+                  "Your Booking is Cancelled. Please book again.",
+                  "error"
+                );
+                return;
+              }
+
+              // Proceed with payment
+              initiatePayment(latestBooking.id, latestBooking.amount, latestBooking);
+            } catch (err) {
+              Swal.fire("Error", err.message, "error");
+            }
+          });
+
+
+        document
+          .getElementById("cancel-button")
+          .addEventListener("click", () => cancelBooking(booking.id));
+      } catch (err) {
+        document.getElementById(
+          "loading"
+        ).innerHTML = `<p style='color:red;'>${err.message}</p>`;
+      }
+    });
+
+    async function initiatePayment(bookingId, amount, bookingData) {
+      const btn = document.getElementById("pay-button");
+      btn.textContent = "Processing...";
+      btn.disabled = true;
+
+      try {
+        const res = await fetch("/payment/create-order", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ bookingId, amount }),
+        });
+        const data = await res.json();
+
+        if (!res.ok || data.error)
+          throw new Error(data.error || "Failed to create order");
+
+        const options = {
+          key: data.key,
+          amount: data.amount,
+          currency: "INR",
+          name: "NashikPicklers",
+          description: `${bookingData.court} | ${bookingData.date} ${bookingData.slot}`,
+          order_id: data.order_id,
+          handler: function (response) {
+            verifyPayment(bookingId, response, bookingData);
+          },
+          prefill: {
+            name: bookingData.name || "User",
+            email: bookingData.email || "",
+            contact: bookingData.phone || "",
+          },
+          theme: { color: "#00bfa5" },
+        };
+
+        const rzp = new Razorpay(options);
+        rzp.open();
+
+        rzp.on("payment.failed", (err) => {
+          Swal.fire("Payment Failed", err.error.description, "error");
+          btn.textContent = "Pay Now";
+          btn.disabled = false;
+        });
+      } catch (err) {
+        Swal.fire("Error", err.message, "error");
+        btn.textContent = "Pay Now";
+        btn.disabled = false;
+      }
+    }
+
+    async function verifyPayment(bookingId, response, bookingData) {
+      try {
+        const res = await fetch("/payment/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            bookingId,
+            razorpay_payment_id: response.razorpay_payment_id,
+            razorpay_order_id: response.razorpay_order_id,
+            razorpay_signature: response.razorpay_signature,
+          }),
+        });
+        const data = await res.json();
+
+        if (!res.ok || !data.success)
+          throw new Error(data.error || "Verification failed");
+
+        showSuccessReceipt(bookingData, response.razorpay_payment_id);
+      } catch (err) {
+        Swal.fire("Verification Failed", err.message, "error");
+      }
+    }
+
+    function showSuccessReceipt(bookingData, paymentId) {
+      const bookingId = bookingData.id; // ensure we have bookingId
+
+      // Fetch booking details to get the invoice number from DB
+      fetch(`/payment/receipt-data/${bookingId}`)
+        .then((res) => res.json())
+        .then((data) => {
+          const invoiceNumber =
+            data.invoiceNumber || `INV-${Date.now().toString().slice(-6)}`;
+          const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(
+            bookingId
+          )}`;
+
+          document.getElementById("booking-details").innerHTML = `
+      <div class="receipt">
+        <div class="receipt-header">
+  <h2>Payment Successful!</h2>
+  <p style="margin:0; font-weight:bold;">Invoice: ${invoiceNumber}</p>
+</div>
+        <hr>
+        <p><strong>Booking ID:</strong> ${bookingData.bookingId}</p>
+        <p><strong>Date:</strong> ${bookingData.date}</p>
+        <p><strong>Time:</strong> ${bookingData.slot}</p>
+        <p><strong>Duration:</strong> ${bookingData.duration}</p>
+        <p><strong>Court:</strong> ${bookingData.court}</p>
+        <p><strong>Players:</strong> ${bookingData.player}</p>
+        <p><strong>Amount:</strong> ₹${bookingData.amount}</p>
+        <p><strong>Payment ID:</strong> ${paymentId}</p>
+        <div class="qr-section" style="text-align:center; margin-top:15px;">
+          <p><strong>Check-in QR Code</strong></p>
+          <img src="${qrCodeUrl}" alt="QR Code" style="border-radius:8px;"/>
+        </div>
+        <button onclick="window.print()" class="btn btn-primary" style="margin-top:20px;">Print Receipt</button>
+      </div>
+    `;
+
+          document.getElementById("pay-button").style.display = "none";
+          document.getElementById("cancel-button").style.display = "none";
+        })
+        .catch((err) => {
+          console.error("Failed to fetch invoice number:", err);
+          Swal.fire("Error", "Failed to fetch invoice number", "error");
+        });
+    }
+
+    async function cancelBooking(bookingId) {
+      if (!confirm("Are you sure you want to cancel this booking?")) return;
+
+      try {
+        const res = await fetch(`/payment/cancel/${bookingId}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
+
+        const data = await res.json();
+        if (!res.ok)
+          throw new Error(data.error || "Failed to cancel booking");
+
+        document.getElementById("booking-details").innerHTML = `
+      <h2 style="color:#ff5252; text-align:center; margin-bottom:10px;">Booking Cancelled</h2>
+      <p style="text-align:center; margin-bottom:10px;">Your booking has been cancelled successfully.</p>
+      ${data.refundAmount
+            ? `<p style="text-align:center; margin-bottom:15px;"><strong>Refund Amount:</strong> ₹${data.refundAmount}</p>`
+            : ""
+          }
+      <div style="display:flex; justify-content:center; margin-top:20px;">
+        <a href="https://wa.me/?text=I%20just%20cancelled%20my%20NashikPicklers%20booking."
+          style="
+            background:#25d366;
+            color:#fff;
+            font-weight:600;
+            padding:12px 25px;
+            border-radius:10px;
+            text-decoration:none;
+            font-size:16px;
+            transition:0.3s;
+            display:inline-block;
+          "
+          onmouseover="this.style.background='#1ebe57'; this.style.transform='translateY(-2px)';"
+          onmouseout="this.style.background='#25d366'; this.style.transform='translateY(0)';"
+        >
+          Message on WhatsApp
+        </a>
+      </div>
+    `;
+
+        // Hide Pay button
+        document.getElementById("pay-button").style.display = "none";
+        document.getElementById("cancel-button").style.display = "none";
+      } catch (err) {
+        document.getElementById("error-message").textContent = err.message;
+      }
+    }
+
+    async function loadContentAndShowModal(url, title) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error("Failed to load content");
+        const html = await response.text();
+
+        Swal.fire({
+          title,
+          html: `<div style="text-align:left; max-height:300px; overflow-y:auto; font-size:14px;">${html}</div>`,
+          confirmButtonText: "Close",
+          confirmButtonColor: "#00bfa5",
+          width: 600,
+        });
+      } catch (err) {
+        Swal.fire("Error", err.message, "error");
+      }
+    }
+
+    document.getElementById("privacy-link").addEventListener("click", (e) => {
+      e.preventDefault();
+      loadContentAndShowModal("/payment/privacy", "Privacy Policy");
+    });
+
+    document.getElementById("terms-link").addEventListener("click", (e) => {
+      e.preventDefault();
+      loadContentAndShowModal(
+        "/payment/terms&conditions",
+        "Terms & Conditions"
+      );
+    });
+  </script>
+</body>
+
+</html>
