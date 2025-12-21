@@ -39,6 +39,7 @@ app.get("/pay", async (req, res) => {
 // serve admin-panel build if present
 const adminBuild = path.join(__dirname, "..", "admin-panel", "dist");
 app.use(express.static(adminBuild));
+app.use(express.static("public")); // Serve public assets like logos
 app.get("/", (req, res) => {
   res.sendFile(path.join(adminBuild, "index.html"), err => {
     if (err) res.json({ ok: true, message: "API running" });

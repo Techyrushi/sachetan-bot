@@ -9,11 +9,14 @@ if (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN) {
 }
 
 /**
- * Send a WhatsApp message with text-based clickable buttons
+ * Send a WhatsApp message. Supports text, media, and interactive buttons (via Content API or fallback).
  * @param {string} to - Recipient phone number
- * @param {string} body - Message body
+ * @param {string} body - Message body (fallback text)
  * @param {Object} options - Additional options
- * @param {Array} options.buttons - Array of button objects with text and id properties
+ * @param {Array} options.buttons - Array of button objects {id, text} for fallback or simulation
+ * @param {string} options.contentSid - Twilio Content Template SID for real interactive messages
+ * @param {Object} options.contentVariables - Variables for the Content Template
+ * @param {string} options.mediaUrl - URL of media to attach
  * @returns {Promise} - Twilio message promise
  */
 async function sendWhatsApp(to, body, options = {}) {
@@ -25,22 +28,37 @@ async function sendWhatsApp(to, body, options = {}) {
     return;
   }
 
+  // 1. Try sending via Content API (Real Interactive Buttons) if SID provided
+  if (options.contentSid) {
+    try {
+      return await client.messages.create({
+        from: TWILIO_WHATSAPP_NUMBER,
+        to,
+        contentSid: options.contentSid,
+        contentVariables: JSON.stringify(options.contentVariables || {})
+      });
+    } catch (err) {
+      console.error("Failed to send Content API message, falling back to text:", err);
+      // Fallback to text below
+    }
+  }
+
+  // 2. Fallback: Text-based simulation of buttons
   let messageBody = body;
   
-  // If buttons are provided, format them as clickable text options
   if (options.buttons && Array.isArray(options.buttons) && options.buttons.length > 0) {
     messageBody += "\n\n";
     
     options.buttons.forEach((button, index) => {
-      // Format as emoji number + button text
+      // Use numbers as they are easiest to type
       const emoji = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"][index] || `${index+1}.`;
-      messageBody += `${emoji} *[${button.text}]*\n`;
+      messageBody += `${emoji} ${button.text}\n`;
     });
     
-    messageBody += "\nTap or reply with the option text.";
+    messageBody += "\nReply with the number or option name.";
   }
 
-  // Send the message with formatted buttons
+  // 3. Send standard message
   const msgData = {
     from: TWILIO_WHATSAPP_NUMBER,
     to,

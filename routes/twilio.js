@@ -178,7 +178,7 @@ function isConversational(text) {
   const t = text.toLowerCase();
   // If it's a number, it's likely a selection (unless it's a year or something, but context matters)
   if (/^\d+$/.test(t)) return false;
-  
+
   // If it's short command like "yes", "no", "menu", "cancel"
   if (["yes", "no", "menu", "cancel", "confirm"].includes(t)) return false;
 
@@ -272,30 +272,55 @@ router.post("/", async (req, res) => {
     if (
       body === "hi" ||
       body === "hello" ||
+      body === "hey" ||
+      body === "hii" ||
+      body === "hiii" ||
+      body === "hola" ||
       body === "restart" ||
-      body === "exit" ||
-      body === "Hi" ||
-      body === "Hello" ||
-      body === "menu" ||
-      body === "Thank You" ||
       body === "start" ||
+      body === "begin" ||
+      body === "menu" ||
+      body === "main menu" ||
+      body === "back" ||
+      body === "home" ||
+      body === "exit" ||
+      body === "end" ||
+      body === "stop" ||
+      body === "reset" ||
       body === "thanks" ||
       body === "thank you" ||
-      body === "Thanks" ||
-      body === "Start" || body === "Thank you for confirming my booking."
+      body === "thankyou" ||
+      body === "thx" ||
+      body === "ty" ||
+      body === "thank u" ||
+      body === "ok" ||
+      body === "okay" ||
+      body === "cool" ||
+      body === "done" ||
+      body === "confirmed" ||
+      body === "yes" ||
+      body === "yep" ||
+      body === "yo" ||
+      body === "good morning" ||
+      body === "good evening" ||
+      body === "good night" ||
+      body === "Thank you for confirming my booking."
     ) {
       delete sessions[from];
       sessions[from] = { stage: "menu" };
+      const logoUrl = `${"https://sachetanpackaging.in"}/assets/uploads/logo.png`;
+
       await sendWhatsApp(
         from,
         `🌟 *Welcome to Sachetan Packaging*
 _Quality Packaging Solutions Since 2011_
 
 We are a premier organization engaged in manufacturing and supplying a wide assortment of:
-🎂 *Cake & Pastry Boxes*
-🍕 *Pizza Boxes*
-🥡 *Paper Bags & Cups*
-📦 *Laminated Boxes & Bases*
+🎂 *Cake & Brownie Boxes*
+🍰 *Pastry Boxes*
+🧁 *Cup Cake Boxes*
+🥡 *Laminated Boxes & Bases*
+📦 *Customized Boxes & Bases*
 
 🌐 *Visit us:* https://sachetanpackaging.in
 
@@ -308,13 +333,15 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
 *3️⃣ AI Assistant* - Product Queries
 *4️⃣ FAQ & Support* - Contact Us
 
-_Reply with a number to proceed._`
+_Reply with a number to proceed._`,
+        { mediaUrl: logoUrl }
       );
       return res.end();
     }
 
     if (!sessions[from]) {
       sessions[from] = { stage: "menu" };
+      const logoUrl = `${"https://sachetanpackaging.in"}/assets/uploads/logo.png`;
       await sendWhatsApp(
         from,
         `🧰 *Welcome to Sachetan Packaging* 
@@ -325,7 +352,8 @@ Select an option:
 *3️⃣ AI Assistant* - Ask product FAQs
 *4️⃣ FAQ & Support* - Help and contact
 
-Reply with a number or option name.`
+Reply with a number or option name.`,
+        { mediaUrl: logoUrl }
       );
       return res.end();
     }
@@ -342,7 +370,7 @@ Reply with a number or option name.`
         }
         session.topCats = topCats;
         let msg = "🛒 *Select a Top Category:*\n\n";
-        topCats.forEach((c, i) => { msg += `*${i+1}️⃣ ${c.tcat_name}*\n`; });
+        topCats.forEach((c, i) => { msg += `*${i + 1}️⃣ ${c.tcat_name}*\n`; });
         msg += "\nReply with the number.";
         await sendWhatsApp(from, msg);
         return res.end();
@@ -483,7 +511,41 @@ Weekends: 10:00 AM - 4:00 PM
 Reply with 'menu' to return to main menu.`
         );
         return res.end();
-      } else if (body === "menu") {
+      } else if (body === "hi" ||
+        body === "hello" ||
+        body === "hey" ||
+        body === "hii" ||
+        body === "hiii" ||
+        body === "hola" ||
+        body === "restart" ||
+        body === "start" ||
+        body === "begin" ||
+        body === "menu" ||
+        body === "main menu" ||
+        body === "back" ||
+        body === "home" ||
+        body === "exit" ||
+        body === "end" ||
+        body === "stop" ||
+        body === "reset" ||
+        body === "thanks" ||
+        body === "thank you" ||
+        body === "thankyou" ||
+        body === "thx" ||
+        body === "ty" ||
+        body === "thank u" ||
+        body === "ok" ||
+        body === "okay" ||
+        body === "cool" ||
+        body === "done" ||
+        body === "confirmed" ||
+        body === "yes" ||
+        body === "yep" ||
+        body === "yo" ||
+        body === "good morning" ||
+        body === "good evening" ||
+        body === "good night" ||
+        body === "Thank you for confirming my booking.") {
         await sendWhatsApp(
           from,
           `🧰 *Sachetan Packaging*
@@ -501,15 +563,15 @@ Reply with a number or option name.`
         try {
           const result = await queryRag(body);
           await sendWhatsApp(from, result.answer || "I'm not sure about that. Reply 'menu' to see options.");
-          
+
           // Optional: save to memory
           try {
             const { upsertDocuments } = require("../utils/rag");
             await upsertDocuments([
               { id: `q_${Date.now()}`, text: `Q: ${body}\nA: ${result.answer || ""}`, metadata: { source: "chat", user: from } }
             ], "customer_memory");
-          } catch {}
-          
+          } catch { }
+
         } catch (e) {
           await sendWhatsApp(
             from,
@@ -522,38 +584,38 @@ Reply with a number or option name.`
 
     // Handle Exit Flow Confirmation
     if (session.stage === "confirm_exit_flow") {
-        if (body.toLowerCase() === "yes") {
-            // User wants to exit flow and ask AI
-            session.stage = "ai_assistant";
-            // We can treat the pending question as the input for AI immediately
-            const question = session.pendingQuestion;
-            delete session.pendingQuestion;
-            delete session.previousStage;
-            
-            // Process AI request immediately
-            try {
-                const result = await queryRag(question);
-                await sendWhatsApp(from, result.answer || "No answer available right now.");
-                try {
-                  const { upsertDocuments } = require("../utils/rag");
-                  await upsertDocuments([
-                    { id: `q_${Date.now()}`, text: `Q: ${question}\nA: ${result.answer || ""}`, metadata: { source: "chat", user: from } }
-                  ], "customer_memory");
-                } catch {}
-            } catch (e) {
-                await sendWhatsApp(from, "Assistant unavailable. Try again later.");
-            }
-            return res.end();
+      if (body === "1" || body.toLowerCase() === "yes") {
+        // User wants to exit flow and ask AI
+        session.stage = "ai_assistant";
+        // We can treat the pending question as the input for AI immediately
+        const question = session.pendingQuestion;
+        delete session.pendingQuestion;
+        delete session.previousStage;
 
-        } else {
-            // User wants to stay in flow
-            session.stage = session.previousStage;
-            delete session.pendingQuestion;
-            delete session.previousStage;
-            await sendWhatsApp(from, "Okay, continuing with your order. Please make a selection.");
-            // Ideally we should re-send the options here, but for now just asking for selection is enough or user can scroll up
-            return res.end();
+        // Process AI request immediately
+        try {
+          const result = await queryRag(question);
+          await sendWhatsApp(from, result.answer || "No answer available right now.");
+          try {
+            const { upsertDocuments } = require("../utils/rag");
+            await upsertDocuments([
+              { id: `q_${Date.now()}`, text: `Q: ${question}\nA: ${result.answer || ""}`, metadata: { source: "chat", user: from } }
+            ], "customer_memory");
+          } catch { }
+        } catch (e) {
+          await sendWhatsApp(from, "Assistant unavailable. Try again later.");
         }
+        return res.end();
+
+      } else {
+        // User wants to stay in flow
+        session.stage = session.previousStage;
+        delete session.pendingQuestion;
+        delete session.previousStage;
+        await sendWhatsApp(from, "Okay, continuing with your order. Please make a selection.");
+        // Ideally we should re-send the options here, but for now just asking for selection is enough or user can scroll up
+        return res.end();
+      }
     }
 
     // Product shopping stages
@@ -562,11 +624,16 @@ Reply with a number or option name.`
       const cats = session.topCats || [];
       if (isNaN(idx) || idx < 1 || idx > cats.length) {
         if (isConversational(body)) {
-           session.previousStage = session.stage;
-           session.pendingQuestion = body;
-           session.stage = "confirm_exit_flow";
-           await sendWhatsApp(from, `⚠️ You are currently ordering. Do you want to cancel and ask: "${body}"?\n\nReply *Yes* to switch to AI chat, or *No* to continue ordering.`);
-           return res.end();
+          session.previousStage = session.stage;
+          session.pendingQuestion = body;
+          session.stage = "confirm_exit_flow";
+          await sendWhatsApp(from, `⚠️ You are currently ordering. Do you want to cancel and ask: "${body}"?`, {
+            buttons: [
+              { id: 'yes', text: 'Yes, ask AI' },
+              { id: 'no', text: 'No, continue order' }
+            ]
+          });
+          return res.end();
         }
         await sendWhatsApp(from, "Invalid selection. Reply with the category number.");
         return res.end();
@@ -582,7 +649,7 @@ Reply with a number or option name.`
       session.midCats = midCats;
       session.stage = "shop_mid_category";
       let msg = `📂 *${selectedTop.tcat_name}*\n\nSelect a subcategory:\n\n`;
-      midCats.forEach((c, i) => { msg += `*${i+1}️⃣ ${c.mcat_name}*\n`; });
+      midCats.forEach((c, i) => { msg += `*${i + 1}️⃣ ${c.mcat_name}*\n`; });
       msg += "\nReply with the number.";
       await sendWhatsApp(from, msg);
       return res.end();
@@ -593,11 +660,16 @@ Reply with a number or option name.`
       const cats = session.midCats || [];
       if (isNaN(idx) || idx < 1 || idx > cats.length) {
         if (isConversational(body)) {
-           session.previousStage = session.stage;
-           session.pendingQuestion = body;
-           session.stage = "confirm_exit_flow";
-           await sendWhatsApp(from, `⚠️ You are currently ordering. Do you want to cancel and ask: "${body}"?\n\nReply *Yes* to switch to AI chat, or *No* to continue ordering.`);
-           return res.end();
+          session.previousStage = session.stage;
+          session.pendingQuestion = body;
+          session.stage = "confirm_exit_flow";
+          await sendWhatsApp(from, `⚠️ You are currently ordering. Do you want to cancel and ask: "${body}"?`, {
+            buttons: [
+              { id: 'yes', text: 'Yes, ask AI' },
+              { id: 'no', text: 'No, continue order' }
+            ]
+          });
+          return res.end();
         }
         await sendWhatsApp(from, "Invalid selection. Reply with the subcategory number.");
         return res.end();
@@ -613,7 +685,7 @@ Reply with a number or option name.`
       session.endCats = endCats;
       session.stage = "shop_end_category";
       let msg = `📁 *${selectedMid.mcat_name}*\n\nSelect a category:\n\n`;
-      endCats.forEach((c, i) => { msg += `*${i+1}️⃣ ${c.ecat_name}*\n`; });
+      endCats.forEach((c, i) => { msg += `*${i + 1}️⃣ ${c.ecat_name}*\n`; });
       msg += "\nReply with the number.";
       await sendWhatsApp(from, msg);
       return res.end();
@@ -640,7 +712,7 @@ Reply with a number or option name.`
       products.forEach((p, i) => {
         const price = p.p_current_price;
         const old = p.p_old_price > price ? ` ~₹${p.p_old_price}~` : "";
-        msg += `*${i+1}️⃣ ${p.p_name}* - ₹${price}${old}\n`;
+        msg += `*${i + 1}️⃣ ${p.p_name}* - ₹${price}${old}\n`;
       });
       msg += "\nReply with the product number, or 'menu' to go back.";
       await sendWhatsApp(from, msg);
@@ -652,11 +724,16 @@ Reply with a number or option name.`
       const products = session.products || [];
       if (isNaN(idx) || idx < 1 || idx > products.length) {
         if (isConversational(body)) {
-           session.previousStage = session.stage;
-           session.pendingQuestion = body;
-           session.stage = "confirm_exit_flow";
-           await sendWhatsApp(from, `⚠️ You are currently ordering. Do you want to cancel and ask: "${body}"?\n\nReply *Yes* to switch to AI chat, or *No* to continue ordering.`);
-           return res.end();
+          session.previousStage = session.stage;
+          session.pendingQuestion = body;
+          session.stage = "confirm_exit_flow";
+          await sendWhatsApp(from, `⚠️ You are currently ordering. Do you want to cancel and ask: "${body}"?`, {
+            buttons: [
+              { id: 'yes', text: 'Yes, ask AI' },
+              { id: 'no', text: 'No, continue order' }
+            ]
+          });
+          return res.end();
         }
         await sendWhatsApp(from, "Invalid selection. Reply with the product number, or 'menu' to go back.");
         return res.end();
@@ -672,19 +749,19 @@ Reply with a number or option name.`
       product.colors = colors.map(c => c.color_name).join(", ");
 
       session.stage = "shop_quantity";
-      
+
       const oldPriceDisplay = product.p_old_price > product.p_current_price ? `\n❌ Old Price: ~₹${product.p_old_price}~` : "";
       const sizeDisplay = product.sizes ? `\n📏 Size: ${product.sizes}` : "";
       const colorDisplay = product.colors ? `\n🎨 Color: ${product.colors}` : "";
-      
+
       const cleanDesc = stripHtml(product.p_description);
       const descDisplay = cleanDesc ? `\n📝 Info: ${cleanDesc.substring(0, 150)}${cleanDesc.length > 150 ? "..." : ""}` : "";
-      
-      const imageUrl = product.p_featured_photo 
+
+      const imageUrl = product.p_featured_photo
         ? `https://www.sachetanpackaging.in/assets/uploads/${product.p_featured_photo}`
         : null;
 
-      await sendWhatsApp(from, 
+      await sendWhatsApp(from,
         `📦 *${product.p_name}*
 ──────────────────
 💰 *Price: ₹${product.p_current_price}*${oldPriceDisplay}${sizeDisplay}${colorDisplay}${descDisplay}
@@ -700,24 +777,29 @@ _Reply 'menu' to go back._`,
       const qty = parseInt(body);
       if (isNaN(qty) || qty < 1) {
         if (isConversational(body)) {
-           session.previousStage = session.stage;
-           session.pendingQuestion = body;
-           session.stage = "confirm_exit_flow";
-           await sendWhatsApp(from, `⚠️ You are currently ordering. Do you want to cancel and ask: "${body}"?\n\nReply *Yes* to switch to AI chat, or *No* to continue ordering.`);
-           return res.end();
+          session.previousStage = session.stage;
+          session.pendingQuestion = body;
+          session.stage = "confirm_exit_flow";
+          await sendWhatsApp(from, `⚠️ You are currently ordering. Do you want to cancel and ask: "${body}"?`, {
+            buttons: [
+              { id: 'yes', text: 'Yes, ask AI' },
+              { id: 'no', text: 'No, continue order' }
+            ]
+          });
+          return res.end();
         }
         await sendWhatsApp(from, "Invalid quantity. Please enter a positive number.");
         return res.end();
       }
       const product = session.selectedProduct;
       const total = (product.p_current_price || 0) * qty;
-      
+
       // Prepare item with full details
-      const item = { 
-        productId: product.p_id, 
-        name: product.p_name, 
-        price: product.p_current_price, 
-        quantity: qty, 
+      const item = {
+        productId: product.p_id,
+        name: product.p_name,
+        price: product.p_current_price,
+        quantity: qty,
         total,
         oldPrice: product.p_old_price,
         size: product.sizes,   // String like "Small, Medium"
@@ -738,16 +820,44 @@ _Reply 'menu' to go back._`,
 
     if (session.stage === "ask_name") {
       if (isConversational(body)) {
-         // Handle interruption if needed, but for name, almost anything is valid.
-         // However, if they type "menu" or "cancel", it's handled by generic logic if we had it, 
-         // but here we check specifically.
-         if (body.toLowerCase() === "menu") {
-             session.stage = "menu";
-             await sendWhatsApp(from, "Order cancelled. Reply 'menu' to see options.");
-             return res.end();
-         }
+        // Handle interruption if needed, but for name, almost anything is valid.
+        // However, if they type "menu" or "cancel", it's handled by generic logic if we had it, 
+        // but here we check specifically.
+        if (body.toLowerCase() === "menu" ||
+          body.toLowerCase() === "cancel" ||
+          body.toLowerCase() === "exit" ||
+          body.toLowerCase() === "stop" ||
+          body.toLowerCase() === "reset" ||
+          body.toLowerCase() === "back" ||
+          body.toLowerCase() === "home" ||
+          body.toLowerCase() === "exit" ||
+          body.toLowerCase() === "end" ||
+          body.toLowerCase() === "stop" ||
+          body.toLowerCase() === "reset" ||
+          body.toLowerCase() === "thanks" ||
+          body.toLowerCase() === "thank you" ||
+          body.toLowerCase() === "thankyou" ||
+          body.toLowerCase() === "thx" ||
+          body.toLowerCase() === "ty" ||
+          body.toLowerCase() === "thank u" ||
+          body.toLowerCase() === "ok" ||
+          body.toLowerCase() === "okay" ||
+          body.toLowerCase() === "cool" ||
+          body.toLowerCase() === "done" ||
+          body.toLowerCase() === "confirmed" ||
+          body.toLowerCase() === "yes" ||
+          body.toLowerCase() === "yep" ||
+          body.toLowerCase() === "yo" ||
+          body.toLowerCase() === "good morning" ||
+          body.toLowerCase() === "good evening" ||
+          body.toLowerCase() === "good night" ||
+          body.toLowerCase() === "Thank you for confirming my booking.") {
+          session.stage = "menu";
+          await sendWhatsApp(from, "Order cancelled. Reply 'menu' to see options.");
+          return res.end();
+        }
       }
-      
+
       session.orderDraft.customerName = body;
       session.stage = "ask_address";
       await sendWhatsApp(from, "📍 *Please enter your Delivery Address:*");
@@ -764,7 +874,7 @@ _Reply 'menu' to go back._`,
     if (session.stage === "ask_pincode") {
       session.orderDraft.pincode = body;
       session.stage = "shop_confirm";
-      
+
       const draft = session.orderDraft;
       const item = draft.items[0]; // Currently single item flow
 
@@ -784,17 +894,34 @@ _Reply 'menu' to go back._`,
 📍 Address: ${draft.address}
 📮 Pincode: ${draft.pincode}
 
-*Grand Total: ₹${draft.totalAmount}*
-
-Reply 'confirm' to get payment link or 'menu' to cancel.`
+*Grand Total: ₹${draft.totalAmount}*`,
+        {
+          buttons: [
+            { id: 'confirm', text: 'Confirm Order' },
+            { id: 'menu', text: 'Cancel Order' }
+          ],
+          contentSid: process.env.TWILIO_CONTENT_SID_CONFIRM,
+          contentVariables: {
+            "1": item.name,
+            "2": String(item.quantity),
+            "3": String(item.price),
+            "4": String(item.total),
+            "5": item.size ? `Size: ${item.size}` : "",
+            "6": item.color ? `Color: ${item.color}` : "",
+            "7": draft.customerName,
+            "8": draft.address,
+            "9": draft.pincode,
+            "10": String(draft.totalAmount)
+          }
+        }
       );
       return res.end();
     }
 
     if (session.stage === "shop_confirm") {
-      if (body === "confirm") {
+      if (body === "1" || body === "confirm" || body.includes("confirm")) {
         const draft = session.orderDraft;
-        const orderId = `ORD-${Date.now().toString().slice(-6)}-${Math.floor(Math.random()*1000)}`;
+        const orderId = `ORD-${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 1000)}`;
         const order = new Order({
           orderId,
           whatsapp: from,
@@ -823,9 +950,36 @@ Reply 'menu' to return.`);
           await upsertDocuments([
             { id: `order_${order._id}`, text: `Order created: ${JSON.stringify(order.toObject())}`, metadata: { source: "order", user: from } }
           ], "customer_memory");
-        } catch {}
+        } catch { }
         return res.end();
-      } else if (body === "menu") {
+      } else if (body === "menu" ||
+        body === "cancel" ||
+        body === "exit" ||
+        body === "stop" ||
+        body === "reset" ||
+        body === "back" ||
+        body === "home" ||
+        body === "exit" ||
+        body === "end" ||
+        body === "stop" ||
+        body === "reset" ||
+        body === "thanks" ||
+        body === "thank you" ||
+        body === "thankyou" ||
+        body === "thx" ||
+        body === "ty" ||
+        body === "thank u" ||
+        body === "ok" ||
+        body === "okay" ||
+        body === "cool" ||
+        body === "done" ||
+        body === "confirmed" ||
+        body === "yes" ||
+        body === "yep" ||
+        body === "yo" ||
+        body === "good morning" ||
+        body === "good evening" ||
+        body === "good night") {
         session.stage = "menu";
         await sendWhatsApp(from, "Order cancelled. Reply 'menu' to see options.");
         return res.end();
@@ -855,7 +1009,7 @@ Reply 'menu' to return.`);
       const question = (req.body.Body || "").trim();
 
       // Exit command
-      if (question.toLowerCase() === "menu" || question.toLowerCase() === "exit") {
+      if (question.toLowerCase() === "main menu" || question.toLowerCase() === "exit" || question.toLowerCase() === "menu" || question.toLowerCase() === "back" || question.toLowerCase() === "home" || question.toLowerCase() === "exit" || question.toLowerCase() === "end" || question.toLowerCase() === "stop" || question.toLowerCase() === "reset" || question.toLowerCase() === "thanks" || question.toLowerCase() === "thank you" || question.toLowerCase() === "thankyou" || question.toLowerCase() === "thx" || question.toLowerCase() === "ty" || question.toLowerCase() === "thank u" || question.toLowerCase() === "ok" || question.toLowerCase() === "okay" || question.toLowerCase() === "cool" || question.toLowerCase() === "done" || question.toLowerCase() === "confirmed" || question.toLowerCase() === "yes" || question.toLowerCase() === "yep" || question.toLowerCase() === "yo" || question.toLowerCase() === "good morning" || question.toLowerCase() === "good evening" || question.toLowerCase() === "good night") {
         session.stage = "menu";
         await sendWhatsApp(
           from,
@@ -879,7 +1033,7 @@ Reply with a number.`
           await upsertDocuments([
             { id: `q_${Date.now()}`, text: `Q: ${question}\nA: ${result.answer || ""}`, metadata: { source: "chat", user: from } }
           ], "customer_memory");
-        } catch {}
+        } catch { }
       } catch (e) {
         await sendWhatsApp(from, "Assistant unavailable. Try again later.");
       }
@@ -982,7 +1136,42 @@ Reply with a number.`
         session.availableDates = availableDates;
         await sendWhatsApp(from, dateOptions);
         return res.end();
-      } else if (body === "menu") {
+      } else if (body === "menu" || body.includes("menu") || body.includes("main menu") ||
+        body === "hi" ||
+        body === "hello" ||
+        body === "hey" ||
+        body === "hii" ||
+        body === "hiii" ||
+        body === "hola" ||
+        body === "restart" ||
+        body === "start" ||
+        body === "begin" ||
+        body === "menu" ||
+        body === "main menu" ||
+        body === "back" ||
+        body === "home" ||
+        body === "exit" ||
+        body === "end" ||
+        body === "stop" ||
+        body === "reset" ||
+        body === "thanks" ||
+        body === "thank you" ||
+        body === "thankyou" ||
+        body === "thx" ||
+        body === "ty" ||
+        body === "thank u" ||
+        body === "ok" ||
+        body === "okay" ||
+        body === "cool" ||
+        body === "done" ||
+        body === "confirmed" ||
+        body === "yes" ||
+        body === "yep" ||
+        body === "yo" ||
+        body === "good morning" ||
+        body === "good evening" ||
+        body === "good night" ||
+        body === "Thank you for confirming my booking.") {
         session.stage = "menu";
         await sendWhatsApp(
           from,
@@ -1161,7 +1350,41 @@ Please reply with:
 
         await sendWhatsApp(from, playerOptions);
         return res.end();
-      } else if (body === "menu") {
+      } else if (body === "hi" ||
+        body === "hello" ||
+        body === "hey" ||
+        body === "hii" ||
+        body === "hiii" ||
+        body === "hola" ||
+        body === "restart" ||
+        body === "start" ||
+        body === "begin" ||
+        body === "menu" ||
+        body === "main menu" ||
+        body === "back" ||
+        body === "home" ||
+        body === "exit" ||
+        body === "end" ||
+        body === "stop" ||
+        body === "reset" ||
+        body === "thanks" ||
+        body === "thank you" ||
+        body === "thankyou" ||
+        body === "thx" ||
+        body === "ty" ||
+        body === "thank u" ||
+        body === "ok" ||
+        body === "okay" ||
+        body === "cool" ||
+        body === "done" ||
+        body === "confirmed" ||
+        body === "yes" ||
+        body === "yep" ||
+        body === "yo" ||
+        body === "good morning" ||
+        body === "good evening" ||
+        body === "good night" ||
+        body === "Thank you for confirming my booking.") {
         session.stage = "menu";
         await sendWhatsApp(
           from,

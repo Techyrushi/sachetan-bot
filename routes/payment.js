@@ -299,7 +299,22 @@ ${itemsList}
 📥 *Download Receipt:*
 ${receiptLink}
 
-Thank you for choosing Sachetan Packaging! We will process your order shortly.`);
+Thank you for choosing Sachetan Packaging! We will process your order shortly.`,
+        {
+          buttons: [
+            { id: 'menu', text: 'Main Menu' }
+          ],
+          contentSid: process.env.TWILIO_CONTENT_SID_MAIN_MENU,
+          contentVariables: {
+            "1": order.orderId || order._id.toString(),
+            "2": order.invoiceNumber,
+            "3": new Date().toLocaleDateString(),
+            "4": itemsList,
+            "5": String(order.totalAmount),
+            "6": receiptLink
+          }
+        }
+      );
       
       return res.json({ success: true });
     } else {
