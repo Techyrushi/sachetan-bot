@@ -2,6 +2,7 @@ const https = require("https");
 const url = require("url");
 const OpenAI = require("openai");
 const { Pinecone } = require("@pinecone-database/pinecone");
+const axios = require("axios");
 
 const DEFAULT_COLLECTION = "website_docs";
 const PINECONE_INDEX = process.env.PINECONE_INDEX || "sachetan-index";
@@ -173,6 +174,29 @@ async function upsertDocuments(docs, collectionName = DEFAULT_COLLECTION) {
   return { ok: true, count: vectors.length };
 }
 
+async function searchTavily(query) {
+  const apiKey = process.env.TAVILY_API_KEY;
+  if (!apiKey) return "";
+  
+  try {
+    const response = await axios.post("https://api.tavily.com/search", {
+      api_key: apiKey,
+      query: `Sachetan Packaging ${query}`,
+      search_depth: "basic",
+      include_domains: ["sachetanpackaging.in"],
+      max_results: 3
+    });
+    
+    if (response.data && Array.isArray(response.data.results)) {
+         return response.data.results.map(r => `[Web Search] ${r.title}: ${r.content}`).join("\n\n");
+    }
+    return "";
+  } catch (e) {
+    console.error("Tavily search error:", e.message);
+    return "";
+  }
+}
+
 async function queryRag(query, topK = 4, collectionName = DEFAULT_COLLECTION) {
   const dim = await getIndexDimension();
   const queryRaw = await embedText(query);
@@ -188,6 +212,13 @@ async function queryRag(query, topK = 4, collectionName = DEFAULT_COLLECTION) {
 
   const matches = response.matches || [];
   const docs = matches.map(m => m.metadata?.text || "").filter(Boolean);
+  
+  // Add Tavily Search
+  const webContext = await searchTavily(query);
+  if (webContext) {
+      docs.push(webContext);
+  }
+
   const context = docs.join("\n\n");
   const answer = await generateAnswer(query, context);
   
@@ -200,7 +231,7 @@ async function generateAnswer(prompt, context) {
       const completion = await openai.chat.completions.create({
         model: process.env.OPENROUTER_MODEL || "deepseek/deepseek-r1-0528:free",
         messages: [
-          { role: "system", content: "You are a friendly, professional, and knowledgeable representative of Sachetan Packaging. Your goal is to assist customers with their inquiries about our packaging products and services using the provided information. Our website is https://sachetanpackaging.in. Answer questions naturally and helpfully, as if you are a human staff member. Do NOT mention 'context', 'provided data', or 'database' in your response. If the information is not available, politely suggest they visit our website or contact our support team for personalized assistance at +91 9226322231 or +91 8446022231. Maintain a formal yet approachable tone." },
+          { role: "system", content: "You are a representative of Sachetan Packaging. Your goal is to assist customers using ONLY the provided context.\n\nIMPORTANT RULES:\n1. Answer ONLY questions related to Sachetan Packaging business, products, or services.\n2. If the user asks about a topic NOT related to Sachetan Packaging, reply exactly with: 'I don't have information about that.'\n3. Do not mention 'context' or 'database'.\n4. If the provided context does not contain the answer, reply with: 'I don't have information about that.'\n5. Our website is https://sachetanpackaging.in." },
           { role: "user", content: `Context:\n${context}\n\nUser question:\n${prompt}` },
         ],
       });

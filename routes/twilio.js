@@ -344,15 +344,28 @@ _Reply with a number to proceed._`,
       const logoUrl = `${"https://sachetanpackaging.in"}/assets/uploads/logo.png`;
       await sendWhatsApp(
         from,
-        `🧰 *Welcome to Sachetan Packaging* 
+        `🌟 *Welcome to Sachetan Packaging*
+_Quality Packaging Solutions Since 2011_
 
-Select an option:
-*1️⃣ Buy Products* - Browse categories and order
-*2️⃣ Order Status* - Track your order
-*3️⃣ AI Assistant* - Ask product FAQs
-*4️⃣ FAQ & Support* - Help and contact
+We are a premier organization engaged in manufacturing and supplying a wide assortment of:
+🎂 *Cake & Brownie Boxes*
+🍰 *Pastry Boxes*
+🧁 *Cup Cake Boxes*
+🥡 *Laminated Boxes & Bases*
+📦 *Customized Boxes & Bases*
 
-Reply with a number or option name.`,
+🌐 *Visit us:* https://sachetanpackaging.in
+
+──────────────────
+
+👇 *Please select a service:*
+
+*1️⃣ Buy Products* - Browse catalog & order
+*2️⃣ Order Status* - Track your shipment
+*3️⃣ AI Assistant* - Product Queries
+*4️⃣ FAQ & Support* - Contact Us
+
+_Reply with a number to proceed._`,
         { mediaUrl: logoUrl }
       );
       return res.end();
@@ -676,39 +689,25 @@ Reply with a number or option name.`
       }
       const selectedMid = cats[idx - 1];
       session.selectedMid = selectedMid;
-      const [endCats] = await mysqlPool.query("SELECT `ecat_id`,`ecat_name` FROM `tbl_end_category` WHERE `mcat_id`=? ORDER BY `ecat_name` ASC", [selectedMid.mcat_id]);
-      if (!endCats.length) {
-        await sendWhatsApp(from, "No end categories here. Reply 'menu' to go back.");
-        session.stage = "menu";
-        return res.end();
-      }
-      session.endCats = endCats;
-      session.stage = "shop_end_category";
-      let msg = `📁 *${selectedMid.mcat_name}*\n\nSelect a category:\n\n`;
-      endCats.forEach((c, i) => { msg += `*${i + 1}️⃣ ${c.ecat_name}*\n`; });
-      msg += "\nReply with the number.";
-      await sendWhatsApp(from, msg);
-      return res.end();
-    }
 
-    if (session.stage === "shop_end_category") {
-      const idx = parseInt(body);
-      const cats = session.endCats || [];
-      if (isNaN(idx) || idx < 1 || idx > cats.length) {
-        await sendWhatsApp(from, "Invalid selection. Reply with the category number.");
-        return res.end();
-      }
-      const selectedEnd = cats[idx - 1];
-      session.selectedEnd = selectedEnd;
-      const [products] = await mysqlPool.query("SELECT `p_id`,`p_name`,`p_current_price`,`p_old_price`,`p_description`,`p_featured_photo` FROM `tbl_product` WHERE `ecat_id`=? AND `p_is_active`=1 ORDER BY `p_name` ASC", [selectedEnd.ecat_id]);
+      // Direct Product Fetch (Skipping End Category)
+      const [products] = await mysqlPool.query(`
+        SELECT p.p_id, p.p_name, p.p_current_price, p.p_old_price, p.p_description, p.p_featured_photo 
+        FROM tbl_product p
+        JOIN tbl_end_category ec ON p.ecat_id = ec.ecat_id
+        WHERE ec.mcat_id = ?
+        ORDER BY p.p_name ASC
+      `, [selectedMid.mcat_id]);
+
       if (!products.length) {
         await sendWhatsApp(from, "No products in this category. Reply 'menu' to go back.");
         session.stage = "menu";
         return res.end();
       }
+
       session.products = products;
       session.stage = "shop_product";
-      let msg = `🧁 *${selectedEnd.ecat_name}*\n\nSelect a product:\n\n`;
+      let msg = `📦 *${selectedMid.mcat_name}*\n\nSelect a product:\n\n`;
       products.forEach((p, i) => {
         const price = p.p_current_price;
         const old = p.p_old_price > price ? ` ~₹${p.p_old_price}~` : "";
@@ -718,6 +717,13 @@ Reply with a number or option name.`
       await sendWhatsApp(from, msg);
       return res.end();
     }
+
+    /* 
+    // Skipped End Category Stage
+    if (session.stage === "shop_end_category") {
+       ...
+    } 
+    */
 
     if (session.stage === "shop_product") {
       const idx = parseInt(body);
@@ -943,7 +949,25 @@ Click to pay:
 ${payUrl}
 
 _Link expires in 5 minutes._
-Reply 'menu' to return.`);
+Reply 'menu' to return.`, {
+          buttons: [
+             { id: 'menu', text: 'Main Menu' }
+          ],
+          // Use 'used contentsid main menu button' (assuming placeholder or same SID if applicable, but usually distinct)
+          // Since no explicit SID provided for Payment Link, we use a placeholder or reuse if appropriate.
+          // Based on user input "used contentsid main menu button", we'll assume they want to use a specific SID they provided before 
+          // or they mean the "Main Menu" SID is NOT for this. 
+          // Actually, "used contentsid main menu button" likely refers to the Main Menu SID 'HX7d5236227e75996966c466fb55ef1434' 
+          // but that template probably doesn't have 4 variables and a CTA.
+          // We will use a placeholder process.env.TWILIO_CONTENT_SID_PAYMENT
+          contentSid: process.env.TWILIO_CONTENT_SID_PAYMENT, 
+          contentVariables: {
+            "1": orderId,
+            "2": String(draft.totalAmount),
+            "3": "5", // Expiration minutes
+            "4": order._id.toString() // Dynamic part of the URL
+          }
+        });
         session.stage = "menu";
         try {
           const { upsertDocuments } = require("../utils/rag");

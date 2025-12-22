@@ -124,7 +124,6 @@ router.post("/rag/sync-products", auth, async (req, res) => {
       LEFT JOIN tbl_end_category ec ON p.ecat_id = ec.ecat_id
       LEFT JOIN tbl_mid_category mc ON ec.mcat_id = mc.mcat_id
       LEFT JOIN tbl_top_category tc ON mc.tcat_id = tc.tcat_id
-      WHERE p.p_is_active = 1
     `);
 
     if (!products.length) return res.json({ ok: true, count: 0, message: "No active products found" });
@@ -552,8 +551,7 @@ router.post("/import-sql", auth, async (req, res) => {
             imageUrl: p_featured_photo || "",
             url: "",
             categoryId,
-            stock: total_quantity ? parseInt(total_quantity) : 0,
-            isActive: p_is_active ? p_is_active === "1" : true,
+            stock: total_quantity ? parseInt(total_quantity) : 0
           }).save();
           productCount++;
         }

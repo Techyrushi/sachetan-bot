@@ -99,7 +99,7 @@ Please arrive 10 minutes early for check-in.`);
           docs.push({ id: `service_${s.id}`, text: String(s.content), metadata: { source: "tbl_service", title: s.title } });
         }
       }
-      const [products] = await mysqlPool.query("SELECT `p_id`,`p_name`,`p_description` FROM `tbl_product` WHERE `p_is_active`=1 ORDER BY `p_total_view` DESC LIMIT 100");
+      const [products] = await mysqlPool.query("SELECT `p_id`,`p_name`,`p_description` FROM `tbl_product` ORDER BY `p_total_view` DESC LIMIT 100");
       for (const pr of products || []) {
         const text = `${pr.p_name}\n${pr.p_description || ""}`;
         docs.push({ id: `product_${pr.p_id}`, text, metadata: { source: "tbl_product" } });
