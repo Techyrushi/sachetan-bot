@@ -2,7 +2,6 @@ const express = require("express");
 const router = express.Router();
  
 const Booking = require("../models/Booking");
-const auth = require("../middleware/auth");
 const sendWhatsApp = require("../utils/sendWhatsApp");
 const Category = require("../models/Category");
 const Product = require("../models/Product");
@@ -36,7 +35,7 @@ async function fetchAllFromTable(table) {
   const [rows] = await mysqlPool.query(`SELECT * FROM \`${table}\``);
   return rows;
 }
-router.get("/sql/:table", auth, async (req, res) => {
+router.get("/sql/:table", async (req, res) => {
   try {
     const table = req.params.table;
     const rows = await fetchAllFromTable(table);
@@ -65,7 +64,7 @@ router.get("/health", async (req, res) => {
   res.json({ ok: true, health, chroma_url: getChromaUrl(), env_chroma_url: process.env.CHROMA_URL });
 });
 
-router.post("/rag/upsert", auth, async (req, res) => {
+router.post("/rag/upsert", async (req, res) => {
   try {
     const docs = Array.isArray(req.body.docs) ? req.body.docs : [];
     if (!docs.length) return res.status(400).json({ message: "docs array required" });
@@ -76,7 +75,7 @@ router.post("/rag/upsert", auth, async (req, res) => {
   }
 });
 
-router.post("/rag/scrape", auth, async (req, res) => {
+router.post("/rag/scrape", async (req, res) => {
   try {
     const { url } = req.body;
     if (!url) return res.status(400).json({ message: "URL is required" });
@@ -114,7 +113,7 @@ router.post("/rag/scrape", auth, async (req, res) => {
   }
 });
 
-router.post("/rag/sync-products", auth, async (req, res) => {
+router.post("/rag/sync-products", async (req, res) => {
   try {
     // Fetch products from MySQL
     const [products] = await mysqlPool.query(`
@@ -193,7 +192,81 @@ Features: ${p.p_feature || ""}
   }
 });
 
-router.get("/rag/query", auth, async (req, res) => {
+router.post("/rag/sync-all", async (req, res) => {
+  try {
+    const [topCats] = await mysqlPool.query("SELECT tcat_id, tcat_name FROM tbl_top_category");
+    const [midCats] = await mysqlPool.query("SELECT mcat_id, mcat_name, tcat_id FROM tbl_mid_category");
+    const [endCats] = await mysqlPool.query("SELECT ecat_id, ecat_name, mcat_id FROM tbl_end_category");
+    const [sizes] = await mysqlPool.query("SELECT size_id, size_name FROM tbl_size");
+    const [products] = await mysqlPool.query(`
+      SELECT p.p_id, p.p_name, p.p_current_price, p.p_old_price, p.p_description, p.p_feature, p.ecat_id,
+             ec.ecat_name, mc.mcat_name, tc.tcat_name
+      FROM tbl_product p
+      LEFT JOIN tbl_end_category ec ON p.ecat_id = ec.ecat_id
+      LEFT JOIN tbl_mid_category mc ON ec.mcat_id = mc.mcat_id
+      LEFT JOIN tbl_top_category tc ON mc.tcat_id = tc.tcat_id
+    `);
+    const [prodSizes] = await mysqlPool.query(`
+      SELECT ps.p_id, ps.size_id, s.size_name
+      FROM tbl_product_size ps
+      JOIN tbl_size s ON ps.size_id = s.size_id
+    `);
+    const topMap = {};
+    for (const t of topCats) topMap[t.tcat_id] = t.tcat_name;
+    const midMap = {};
+    for (const m of midCats) midMap[m.mcat_id] = { name: m.mcat_name, tcat_id: m.tcat_id, tcat_name: topMap[m.tcat_id] || "" };
+    const endMap = {};
+    for (const e of endCats) endMap[e.ecat_id] = { name: e.ecat_name, mcat_id: e.mcat_id, mcat_name: (midMap[e.mcat_id] || {}).name || "", tcat_id: (midMap[e.mcat_id] || {}).tcat_id || null, tcat_name: (midMap[e.mcat_id] || {}).tcat_name || "" };
+    const docs = [];
+    for (const t of topCats) {
+      const text = `Top Category: ${t.tcat_name}`.trim();
+      docs.push({ id: `tcat_${t.tcat_id}`, text, metadata: { source: "database", type: "top_category", tcat_id: t.tcat_id, name: t.tcat_name } });
+    }
+    for (const m of midCats) {
+      const text = `Mid Category: ${m.mcat_name}
+Parent Top: ${topMap[m.tcat_id] || ""}`.trim();
+      docs.push({ id: `mcat_${m.mcat_id}`, text, metadata: { source: "database", type: "mid_category", mcat_id: m.mcat_id, name: m.mcat_name, tcat_id: m.tcat_id, tcat_name: topMap[m.tcat_id] || "" } });
+    }
+    for (const e of endCats) {
+      const mc = midMap[e.mcat_id] || {};
+      const text = `End Category: ${e.ecat_name}
+Parent Mid: ${mc.name || ""}`.trim();
+      docs.push({ id: `ecat_${e.ecat_id}`, text, metadata: { source: "database", type: "end_category", ecat_id: e.ecat_id, name: e.ecat_name, mcat_id: e.mcat_id, mcat_name: mc.name || "" } });
+    }
+    for (const s of sizes) {
+      const text = `Size: ${s.size_name}`.trim();
+      docs.push({ id: `size_${s.size_id}`, text, metadata: { source: "database", type: "size", size_id: s.size_id, name: s.size_name } });
+    }
+    for (const p of products) {
+      const text = `Product: ${p.p_name}
+Category: ${p.tcat_name || ""} > ${p.mcat_name || ""} > ${p.ecat_name || ""}
+Price: ₹${p.p_current_price}
+Description: ${p.p_description || ""}
+Features: ${p.p_feature || ""}`.trim();
+      docs.push({ id: `prod_${p.p_id}`, text, metadata: { source: "database", type: "product", product_id: p.p_id, name: p.p_name || "", ecat_id: p.ecat_id, ecat_name: p.ecat_name || "", mcat_name: p.mcat_name || "", tcat_name: p.tcat_name || "" } });
+    }
+    const prodSizeByProduct = {};
+    for (const r of prodSizes) {
+      if (!prodSizeByProduct[r.p_id]) prodSizeByProduct[r.p_id] = [];
+      prodSizeByProduct[r.p_id].push(r.size_name);
+      const text = `Product Size Mapping
+Product ID: ${r.p_id}
+Size: ${r.size_name}`.trim();
+      docs.push({ id: `prodsize_${r.p_id}_${r.size_id}`, text, metadata: { source: "database", type: "product_size", product_id: r.p_id, size_id: r.size_id, size_name: r.size_name } });
+    }
+    const batchSize = 100;
+    let total = 0;
+    for (let i = 0; i < docs.length; i += batchSize) {
+      const batch = docs.slice(i, i + batchSize);
+      await upsertDocuments(batch);
+      total += batch.length;
+    }
+    res.json({ ok: true, count: total, message: "Synced top/mid/end categories, products, sizes, and product-size mapping" });
+  } catch (err) {
+    res.status(500).json({ message: "Failed", error: err.message });
+  }
+});
+router.get("/rag/query", async (req, res) => {
   try {
     const q = req.query.q || "";
     const topK = req.query.topK ? parseInt(req.query.topK) : 4;
@@ -204,7 +277,7 @@ router.get("/rag/query", auth, async (req, res) => {
   }
 });
 
-router.post("/rag/upsert-from-pages", auth, async (req, res) => {
+router.post("/rag/upsert-from-pages", async (req, res) => {
   try {
     const [pages] = await mysqlPool.query("SELECT * FROM `tbl_page` LIMIT 1");
     if (!pages || !pages.length) return res.json({ ok: true, count: 0 });
@@ -229,7 +302,7 @@ router.post("/rag/upsert-from-pages", auth, async (req, res) => {
   }
 });
 
-router.get("/sql/products/composed", auth, async (req, res) => {
+router.get("/sql/products/composed", async (req, res) => {
   try {
     const pId = req.query.p_id ? parseInt(req.query.p_id) : null;
     const ecatId = req.query.ecat_id ? parseInt(req.query.ecat_id) : null;
@@ -335,7 +408,7 @@ router.get("/sql/products/composed", auth, async (req, res) => {
 
 
 // Bookings
-router.get("/bookings", auth, async (req, res) => {
+router.get("/bookings", async (req, res) => {
   try {
     const bookings = await Booking.find().sort({ createdAt: -1 });
     res.json(bookings);
@@ -344,7 +417,7 @@ router.get("/bookings", auth, async (req, res) => {
   }
 });
 
-router.post("/bookings/:id/sendMessage", auth, async (req, res) => {
+router.post("/bookings/:id/sendMessage", async (req, res) => {
   const { message } = req.body;
   try {
     const booking = await Booking.findById(req.params.id);
@@ -359,17 +432,17 @@ router.post("/bookings/:id/sendMessage", auth, async (req, res) => {
 });
 
 // Categories
-router.get("/categories", auth, async (req, res) => {
+router.get("/categories", async (req, res) => {
   const categories = await Category.find({ isActive: true }).sort({ name: 1 });
   res.json(categories);
 });
-router.post("/categories", auth, async (req, res) => {
+router.post("/categories", async (req, res) => {
   const { name, url, parentId, isActive } = req.body;
   const c = new Category({ name, url, parentId: parentId || null, isActive: isActive !== false });
   await c.save();
   res.json(c);
 });
-router.put("/categories/:id", auth, async (req, res) => {
+router.put("/categories/:id", async (req, res) => {
   const { name, url, parentId, isActive } = req.body;
   const c = await Category.findByIdAndUpdate(
     req.params.id,
@@ -379,26 +452,26 @@ router.put("/categories/:id", auth, async (req, res) => {
   if (!c) return res.status(404).json({ message: "Category not found" });
   res.json(c);
 });
-router.delete("/categories/:id", auth, async (req, res) => {
+router.delete("/categories/:id", async (req, res) => {
   await Category.findByIdAndDelete(req.params.id);
   res.json({ ok: true });
 });
 
 // Products
-router.get("/products", auth, async (req, res) => {
+router.get("/products", async (req, res) => {
   const { categoryId } = req.query;
   const filter = { isActive: true };
   if (categoryId) filter.categoryId = categoryId;
   const products = await Product.find(filter).sort({ createdAt: -1 });
   res.json(products);
 });
-router.post("/products", auth, async (req, res) => {
+router.post("/products", async (req, res) => {
   const { name, description, price, imageUrl, url, categoryId, stock, isActive } = req.body;
   const p = new Product({ name, description, price, imageUrl, url, categoryId, stock, isActive: isActive !== false });
   await p.save();
   res.json(p);
 });
-router.put("/products/:id", auth, async (req, res) => {
+router.put("/products/:id", async (req, res) => {
   const { name, description, price, imageUrl, url, categoryId, stock, isActive } = req.body;
   const p = await Product.findByIdAndUpdate(
     req.params.id,
@@ -408,19 +481,19 @@ router.put("/products/:id", auth, async (req, res) => {
   if (!p) return res.status(404).json({ message: "Product not found" });
   res.json(p);
 });
-router.delete("/products/:id", auth, async (req, res) => {
+router.delete("/products/:id", async (req, res) => {
   await Product.findByIdAndDelete(req.params.id);
   res.json({ ok: true });
 });
 
 // Orders list
-router.get("/orders", auth, async (req, res) => {
+router.get("/orders", async (req, res) => {
   const orders = await Order.find().sort({ createdAt: -1 });
   res.json(orders);
 });
 
 // Import from SQL dump (categories, products, documents)
-router.post("/import-sql", auth, async (req, res) => {
+router.post("/import-sql", async (req, res) => {
   try {
     const dumpPath = path.join(__dirname, "..", "u861980547_sachetan.sql");
     if (!fs.existsSync(dumpPath)) {

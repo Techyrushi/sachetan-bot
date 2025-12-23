@@ -761,7 +761,7 @@ Reply with a number or option name.`
       const colorDisplay = product.colors ? `\n🎨 Color: ${product.colors}` : "";
 
       const cleanDesc = stripHtml(product.p_description);
-      const descDisplay = cleanDesc ? `\n📝 Info: ${cleanDesc.substring(0, 150)}${cleanDesc.length > 150 ? "..." : ""}` : "";
+      const descDisplay = cleanDesc ? `\n📝 Description: ${cleanDesc.substring(0, 150)}${cleanDesc.length > 150 ? "..." : ""}` : "";
 
       const imageUrl = product.p_featured_photo
         ? `https://www.sachetanpackaging.in/assets/uploads/${product.p_featured_photo}`

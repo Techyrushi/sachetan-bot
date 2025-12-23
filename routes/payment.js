@@ -311,7 +311,7 @@ Thank you for choosing Sachetan Packaging! We will process your order shortly.`,
             "3": new Date().toLocaleDateString(),
             "4": itemsList,
             "5": String(order.totalAmount),
-            "6": order.orderId || order._id.toString(),
+            "6": order._id.toString(),
           }
         }
       );
