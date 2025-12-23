@@ -333,8 +333,8 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
 *3️⃣ AI Assistant* - Product Queries
 *4️⃣ FAQ & Support* - Contact Us
 
-_Reply with a number to proceed._`,
-        { mediaUrl: logoUrl }
+        _Reply with a number to proceed._`,
+        { mediaUrl: logoUrl, contentSid: process.env.TWILIO_CONTENT_SID_SERVICES, sendLogoFirst: true }
       );
       return res.end();
     }
@@ -365,8 +365,8 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
 *3️⃣ AI Assistant* - Product Queries
 *4️⃣ FAQ & Support* - Contact Us
 
-_Reply with a number to proceed._`,
-        { mediaUrl: logoUrl }
+        _Reply with a number to proceed._`,
+        { mediaUrl: logoUrl, contentSid: process.env.TWILIO_CONTENT_SID_SERVICES, sendLogoFirst: true }
       );
       return res.end();
     }
@@ -951,7 +951,7 @@ ${payUrl}
 _Link expires in 5 minutes._
 Reply 'menu' to return.`, {
           buttons: [
-             { id: 'menu', text: 'Main Menu' }
+            { id: 'menu', text: 'Main Menu' }
           ],
           // Use 'used contentsid main menu button' (assuming placeholder or same SID if applicable, but usually distinct)
           // Since no explicit SID provided for Payment Link, we use a placeholder or reuse if appropriate.
@@ -960,7 +960,7 @@ Reply 'menu' to return.`, {
           // Actually, "used contentsid main menu button" likely refers to the Main Menu SID 'HX7d5236227e75996966c466fb55ef1434' 
           // but that template probably doesn't have 4 variables and a CTA.
           // We will use a placeholder process.env.TWILIO_CONTENT_SID_PAYMENT
-          contentSid: process.env.TWILIO_CONTENT_SID_PAYMENT, 
+          contentSid: process.env.TWILIO_CONTENT_SID_PAYMENT,
           contentVariables: {
             "1": orderId,
             "2": String(draft.totalAmount),

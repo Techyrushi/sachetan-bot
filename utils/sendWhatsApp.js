@@ -31,6 +31,15 @@ async function sendWhatsApp(to, body, options = {}) {
   // 1. Try sending via Content API (Real Interactive Buttons) if SID provided
   if (options.contentSid) {
     try {
+      if (options.sendLogoFirst && options.mediaUrl) {
+        await client.messages.create({
+          from: TWILIO_WHATSAPP_NUMBER,
+          to,
+          mediaUrl: [options.mediaUrl]
+        });
+        const delayMs = typeof options.logoDelayMs === "number" ? Math.max(0, Math.min(options.logoDelayMs, 5000)) : 800;
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
       return await client.messages.create({
         from: TWILIO_WHATSAPP_NUMBER,
         to,
