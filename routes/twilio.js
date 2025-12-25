@@ -8,6 +8,7 @@ const Category = require("../models/Category");
 const Product = require("../models/Product");
 const Order = require("../models/Order");
 const { queryRag } = require("../utils/rag");
+const { logConversation, logLead } = require("../utils/sheets");
 // const { nanoid } = require("nanoid");
 const cron = require("node-cron");
 
@@ -395,16 +396,15 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
         session.stage = "ai_assistant";
         await sendWhatsApp(
           from,
-          `👋 *Welcome to Sachetan AI Support!*
+          `👋 *Welcome to Sachetan Packaging Sales Support*
 
-I am your virtual assistant, ready to answer your queries regarding:
-✨ **Product Specifications & Sizes**
-✨ **Customization & Branding**
-✨ **Pricing & Bulk Orders**
-✨ **Shipping & Logistics**
+I’m your packaging sales assistant. Tell me what you need:
+• Product (cake box, bag, base)
+• Size or use (e.g., 1 kg cake)
+• Printing/branding
+• Quantity
 
-*How may I assist you today?*
-_(Simply type your question below)_`
+Share any details you have, and I’ll guide you step-by-step.`
         );
         return res.end();
       } else if (body === "4" || body.includes("support")) {
@@ -616,7 +616,7 @@ Reply with a number or option name.`
             ], "customer_memory");
           } catch { }
         } catch (e) {
-          await sendWhatsApp(from, "Assistant unavailable. Try again later.");
+          await sendWhatsApp(from, "⚠️ Oops! Our assistant is taking a short break. Please try again in a few moments - we’ll be right back to help you 😊");
         }
         return res.end();
 
@@ -1031,6 +1031,40 @@ Reply 'menu' to return.`, {
 
     if (session.stage === "ai_assistant") {
       const question = (req.body.Body || "").trim();
+      session.sales = session.sales || { askedNameCity: false };
+      function extractSpecs(t) {
+        const s = t.toLowerCase();
+        let product = "";
+        if (/cake box|cakebox|cake\s*box/.test(s)) product = "Cake Box";
+        else if (/pizza box|pizza\s*box/.test(s)) product = "Pizza Box";
+        else if (/paper bag|bag/.test(s)) product = "Paper Bag";
+        else if (/base|cake base|board/.test(s)) product = "Base";
+        else if (/laminated box/.test(s)) product = "Laminated Box";
+        const sizeMatch = s.match(/(\d+)\s*kg/) || s.match(/size\s*[:\-]\s*([^\n]+)/);
+        const size = sizeMatch ? (sizeMatch[1] || sizeMatch[0]) : "";
+        const qtyMatch = s.match(/(\d{2,})\s*(qty|pcs|pieces|quantity)/) || s.match(/quantity\s*[:\-]\s*(\d{2,})/);
+        const quantity = qtyMatch ? (qtyMatch[1] || "") : "";
+        const gsmMatch = s.match(/(\d{2,4})\s*gsm/);
+        const paper = gsmMatch ? `${gsmMatch[1]} GSM` : "";
+        const printing = /print|printed|logo|branding|custom/.test(s) ? "Yes" : "";
+        return { product, size, paper, quantity, printing };
+      }
+      function extractNameCity(t) {
+        const s = t.trim();
+        let name = null, city = null;
+        const m1 = s.match(/my name is\s+([a-zA-Z ]{2,})/i);
+        if (m1) name = m1[1].trim();
+        const m2 = s.match(/i am\s+([a-zA-Z ]{2,})/i);
+        if (!name && m2) name = m2[1].trim();
+        const m3 = s.match(/\bfrom\s+([a-zA-Z ]{2,})/i);
+        if (m3) city = m3[1].trim();
+        const m4 = s.match(/\bcity\s*[:\-]\s*([a-zA-Z ]{2,})/i);
+        if (!city && m4) city = m4[1].trim();
+        return { name, city };
+      }
+      const nc = extractNameCity(question);
+      if (nc.name) session.sales.name = nc.name;
+      if (nc.city) session.sales.city = nc.city;
 
       // Exit command
       if (question.toLowerCase() === "main menu" || question.toLowerCase() === "exit" || question.toLowerCase() === "menu" || question.toLowerCase() === "back" || question.toLowerCase() === "home" || question.toLowerCase() === "exit" || question.toLowerCase() === "end" || question.toLowerCase() === "stop" || question.toLowerCase() === "reset" || question.toLowerCase() === "thanks" || question.toLowerCase() === "thank you" || question.toLowerCase() === "thankyou" || question.toLowerCase() === "thx" || question.toLowerCase() === "ty" || question.toLowerCase() === "thank u" || question.toLowerCase() === "ok" || question.toLowerCase() === "okay" || question.toLowerCase() === "cool" || question.toLowerCase() === "done" || question.toLowerCase() === "confirmed" || question.toLowerCase() === "yes" || question.toLowerCase() === "yep" || question.toLowerCase() === "yo" || question.toLowerCase() === "good morning" || question.toLowerCase() === "good evening" || question.toLowerCase() === "good night") {
@@ -1051,7 +1085,36 @@ Reply with a number.`
 
       try {
         const result = await queryRag(question);
-        await sendWhatsApp(from, result.answer || "No answer available right now.");
+        const reply = result.answer || "No answer available right now.";
+        await sendWhatsApp(from, reply);
+        await logConversation({
+          phone: from,
+          name: session.sales.name || "",
+          city: session.sales.city || "",
+          stage: "ai_assistant",
+          message: question,
+          reply,
+        });
+        const isLeadIntent = /quote|quotation|order|buy|price|bulk|custom|printed|logo|branding/i.test(question);
+        const specs = extractSpecs(question);
+        if (isLeadIntent) {
+          await logLead({
+            phone: from,
+            name: session.sales.name || "",
+            city: session.sales.city || "",
+            product: specs.product,
+            size: specs.size,
+            paper: specs.paper,
+            quantity: specs.quantity,
+            printing: specs.printing,
+            notes: question,
+            converted: true,
+          });
+        }
+        if (!session.sales.askedNameCity && (!session.sales.name || !session.sales.city)) {
+          session.sales.askedNameCity = true;
+          await sendWhatsApp(from, "May I know your name and city?");
+        }
         try {
           const { upsertDocuments } = require("../utils/rag");
           await upsertDocuments([
@@ -1059,7 +1122,7 @@ Reply with a number.`
           ], "customer_memory");
         } catch { }
       } catch (e) {
-        await sendWhatsApp(from, "Assistant unavailable. Try again later.");
+        await sendWhatsApp(from, "⚠️ Oops! Our assistant is taking a short break. Please try again in a few moments - we’ll be right back to help you 😊");
       }
       // Stay in ai_assistant stage
       return res.end();

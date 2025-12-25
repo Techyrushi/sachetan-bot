@@ -11,6 +11,7 @@ const path = require("path");
  
 const { upsertDocuments, queryRag, ensureCollection, pingChroma, testOpenRouter, getChromaUrl } = require("../utils/rag");
 const { scrapeUrl, chunkText } = require("../utils/scraper");
+const { logConversation, logLead, listSheets } = require("../utils/sheets");
 const mysqlPool = require("../config/mysql");
 const allowedTables = new Set([
   "tbl_product",
@@ -484,6 +485,58 @@ router.put("/products/:id", async (req, res) => {
 router.delete("/products/:id", async (req, res) => {
   await Product.findByIdAndDelete(req.params.id);
   res.json({ ok: true });
+});
+
+// Google Sheets status and test
+router.get("/sheets/status", async (req, res) => {
+  const hasId = !!process.env.GOOGLE_SHEETS_ID;
+  const hasEmail = !!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const hasKey = !!process.env.GOOGLE_PRIVATE_KEY;
+  const configured = hasId && hasEmail && hasKey;
+  const result = { configured, hasId, hasEmail, hasKey };
+  if (!configured) return res.json(result);
+  try {
+    await logConversation({
+      phone: "test",
+      name: "healthcheck",
+      city: "n/a",
+      stage: "admin_check",
+      message: "healthcheck",
+      reply: "ok",
+    });
+    result.appendTest = "ok";
+    res.json(result);
+  } catch (e) {
+    result.appendTest = `error: ${e.message}`;
+    res.json(result);
+  }
+});
+
+router.post("/sheets/test/conversation", async (req, res) => {
+  try {
+    const ok = await logConversation(req.body || {});
+    res.json({ ok });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+router.post("/sheets/test/lead", async (req, res) => {
+  try {
+    const ok = await logLead(req.body || {});
+    res.json({ ok });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+router.get("/sheets/list", async (req, res) => {
+  try {
+    const titles = await listSheets();
+    res.json({ count: titles.length, sheets: titles });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Orders list
