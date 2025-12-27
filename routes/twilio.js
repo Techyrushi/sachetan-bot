@@ -305,12 +305,15 @@ router.post("/", async (req, res) => {
       body === "good morning" ||
       body === "good evening" ||
       body === "good night" ||
-      body === "Thank you for confirming my booking."
+      body === "Thank you for confirming my booking." ||
+      body.includes(["Hi", "Thank you"])
     ) {
       delete sessions[from];
       sessions[from] = { stage: "menu" };
       const logoUrl = `${"https://sachetanpackaging.in"}/assets/uploads/logo.png`;
 
+      await sendWhatsApp(from, "", { mediaUrl: logoUrl });
+      await new Promise(r => setTimeout(r, 2000)); // Wait 1.5s for media to arrive first
       await sendWhatsApp(
         from,
         `🌟 *Welcome to Sachetan Packaging*
@@ -335,7 +338,7 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
 *4️⃣ FAQ & Support* - Contact Us
 
         _Reply with a number to proceed._`,
-        { mediaUrl: logoUrl, contentSid: process.env.TWILIO_CONTENT_SID_SERVICES, sendLogoFirst: true }
+        { contentSid: process.env.TWILIO_CONTENT_SID_SERVICES }
       );
       return res.end();
     }
@@ -343,6 +346,8 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
     if (!sessions[from]) {
       sessions[from] = { stage: "menu" };
       const logoUrl = `${"https://sachetanpackaging.in"}/assets/uploads/logo.png`;
+      await sendWhatsApp(from, "", { mediaUrl: logoUrl });
+      await new Promise(r => setTimeout(r, 2000)); // Wait 2s for media to arrive first 
       await sendWhatsApp(
         from,
         `🌟 *Welcome to Sachetan Packaging*
@@ -367,7 +372,7 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
 *4️⃣ FAQ & Support* - Contact Us
 
         _Reply with a number to proceed._`,
-        { mediaUrl: logoUrl, contentSid: process.env.TWILIO_CONTENT_SID_SERVICES, sendLogoFirst: true }
+        { contentSid: process.env.TWILIO_CONTENT_SID_SERVICES }
       );
       return res.end();
     }
@@ -558,7 +563,9 @@ Reply with 'menu' to return to main menu.`
         body === "good morning" ||
         body === "good evening" ||
         body === "good night" ||
-        body === "Thank you for confirming my booking.") {
+        body === "Thank you for confirming my booking." ||
+        body.includes(["Hi", "Thank you"])
+      ) {
         await sendWhatsApp(
           from,
           `🧰 *Sachetan Packaging*
@@ -1258,7 +1265,9 @@ Reply with a number.`
         body === "good morning" ||
         body === "good evening" ||
         body === "good night" ||
-        body === "Thank you for confirming my booking.") {
+        body === "Thank you for confirming my booking." ||
+        body.includes(["Hi", "Thank you"])
+      ) {
         session.stage = "menu";
         await sendWhatsApp(
           from,
@@ -1471,7 +1480,9 @@ Please reply with:
         body === "good morning" ||
         body === "good evening" ||
         body === "good night" ||
-        body === "Thank you for confirming my booking.") {
+        body === "Thank you for confirming my booking." ||
+        body.includes(["Hi", "Thank you"])
+      ) {
         session.stage = "menu";
         await sendWhatsApp(
           from,
