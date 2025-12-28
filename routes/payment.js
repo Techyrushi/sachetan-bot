@@ -71,8 +71,14 @@ router.get("/receipt/:id", async (req, res) => {
 router.get("/product", (req, res) => {
   res.sendFile(path.join(__dirname, "../public/order-payment.html"));
 });
+
 router.get("/product/receipt/:id", (req, res) => {
   res.sendFile(path.join(__dirname, "../public/order-receipt.html"));
+});
+
+// Admin login page
+router.get("/admin/login", (req, res) => {
+  res.sendFile(path.join(__dirname, "../public/admin-ai.html"));
 });
 
 // Get booking details for payment page
@@ -106,8 +112,8 @@ router.get("/product/order/:id", async (req, res) => {
 
     // Check expiration
     if (order.status === "PENDING" && order.expiresAt && new Date() > new Date(order.expiresAt)) {
-        order.status = "EXPIRED";
-        await order.save();
+      order.status = "EXPIRED";
+      await order.save();
     }
 
     res.json({
@@ -270,21 +276,21 @@ router.post("/verify-product", async (req, res) => {
       order.paymentId = razorpay_payment_id;
       // Generate Invoice Number if not exists
       if (!order.invoiceNumber) {
-          const date = new Date();
-          const year = date.getFullYear();
-          const count = await Order.countDocuments({ status: "PAID" }); // Simple counter
-          order.invoiceNumber = `INV-${year}-${(count + 1).toString().padStart(4, "0")}`;
+        const date = new Date();
+        const year = date.getFullYear();
+        const count = await Order.countDocuments({ status: "PAID" }); // Simple counter
+        order.invoiceNumber = `INV-${year}-${(count + 1).toString().padStart(4, "0")}`;
       }
       await order.save();
-      
+
       // Send WhatsApp Confirmation
       const itemsList = order.items.map((item, i) => {
-          return `${i+1}. *${item.name}* (x${item.quantity}) - ₹${item.total}`;
+        return `${i + 1}. *${item.name}* (x${item.quantity}) - ₹${item.total}`;
       }).join('\n');
 
       const receiptLink = `${process.env.BASE_URL || "http://localhost:4000"}/payment/product/receipt/${order._id}`;
 
-      await sendWhatsApp(order.whatsapp, 
+      await sendWhatsApp(order.whatsapp,
         `✅ *Payment Received & Order Confirmed!*
         
 🆔 *Order ID:* ${order.orderId || order._id}
@@ -315,7 +321,7 @@ Thank you for choosing Sachetan Packaging! We will process your order shortly.`,
           }
         }
       );
-      
+
       return res.json({ success: true });
     } else {
       return res.status(400).json({ error: "Signature verification failed" });

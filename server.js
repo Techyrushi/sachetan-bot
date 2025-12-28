@@ -16,6 +16,7 @@ connectDB();
 
 // routes
 app.use("/api/auth", require("./routes/auth"));
+app.use("/api/admin/ai", require("./routes/admin_ai"));
 app.use("/api/admin", require("./routes/admin"));
 app.use("/payment", require("./routes/payment"));
 app.use("/webhook/twilio", require("./routes/twilio"));
