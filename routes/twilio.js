@@ -1043,7 +1043,7 @@ Reply 'menu' to return.`, {
 
     if (session.stage === "ai_assistant") {
       const question = (req.body.Body || "").trim();
-      session.sales = session.sales || { askedNameCity: false };
+      session.sales = session.sales || { askedNameCity: false, leadLogged: false };
       function extractSpecs(t) {
         const s = t.toLowerCase();
         let product = "";
@@ -1061,20 +1061,45 @@ Reply 'menu' to return.`, {
         const printing = /print|printed|logo|branding|custom/.test(s) ? "Yes" : "";
         return { product, size, paper, quantity, printing };
       }
-      function extractNameCity(t) {
-        const s = t.trim();
+      function extractNameCity(t, askedHint) {
+        const s = (t || "").trim().replace(/\s+/g, " ");
         let name = null, city = null;
-        const m1 = s.match(/my name is\s+([a-zA-Z ]{2,})/i);
-        if (m1) name = m1[1].trim();
-        const m2 = s.match(/i am\s+([a-zA-Z ]{2,})/i);
-        if (!name && m2) name = m2[1].trim();
-        const m3 = s.match(/\bfrom\s+([a-zA-Z ]{2,})/i);
-        if (m3) city = m3[1].trim();
-        const m4 = s.match(/\bcity\s*[:\-]\s*([a-zA-Z ]{2,})/i);
-        if (!city && m4) city = m4[1].trim();
+        let m;
+        m = s.match(/name\s*[:\-]\s*([a-zA-Z ]{2,})/i);
+        if (m) name = m[1].trim();
+        m = s.match(/\bcity\s*[:\-]\s*([a-zA-Z ]{2,})/i);
+        if (m) city = m[1].trim();
+        m = s.match(/my name is\s+([a-zA-Z ]{2,})/i);
+        if (!name && m) name = m[1].trim();
+        m = s.match(/i am\s+([a-zA-Z ]{2,})/i);
+        if (!name && m) name = m[1].trim();
+        m = s.match(/\bfrom\s+([a-zA-Z ]{2,})/i);
+        if (!city && m) city = m[1].trim();
+        if (askedHint) {
+          const segments = s.split(/[,\|]+/).map(x => x.trim()).filter(Boolean);
+          if (!name && !city && segments.length >= 2) {
+            const lastSeg = segments[segments.length - 1].replace(/\bcity\b:?/i, "").trim();
+            const nameSeg = segments.slice(0, -1).join(" ").trim();
+            if (/^[a-zA-Z ]{2,}$/.test(nameSeg) && /^[a-zA-Z ]{2,}$/.test(lastSeg)) {
+              name = nameSeg;
+              city = lastSeg;
+            }
+          }
+          if (!name || !city) {
+            const tokens = s.split(/\s+/).filter(Boolean);
+            if (!name && !city && tokens.length >= 2) {
+              const cityCandidate = tokens[tokens.length - 1];
+              const nameCandidate = tokens.slice(0, tokens.length - 1).join(" ");
+              if (/^[a-zA-Z ]{2,}$/.test(nameCandidate) && /^[a-zA-Z ]{2,}$/.test(cityCandidate)) {
+                name = nameCandidate;
+                city = cityCandidate;
+              }
+            }
+          }
+        }
         return { name, city };
       }
-      const nc = extractNameCity(question);
+      const nc = extractNameCity(question, session.sales.askedNameCity);
       if (nc.name) session.sales.name = nc.name;
       if (nc.city) session.sales.city = nc.city;
 
@@ -1122,10 +1147,32 @@ Reply with a number.`
             notes: question,
             converted: true,
           });
+        } else if ((session.sales.name && session.sales.city) && !session.sales.leadLogged) {
+          await logLead({
+            phone: from,
+            name: session.sales.name,
+            city: session.sales.city,
+            product: "",
+            size: "",
+            paper: "",
+            quantity: "",
+            printing: "",
+            notes: question,
+            converted: false,
+          });
+          session.sales.leadLogged = true;
         }
         if (!session.sales.askedNameCity && (!session.sales.name || !session.sales.city)) {
           session.sales.askedNameCity = true;
-          await sendWhatsApp(from, "May I know your name and city?");
+          await sendWhatsApp(from, "May I know your name and city? For example: Rahul Pune or name: Rahul, city: Pune");
+        } else if (session.sales.askedNameCity) {
+          if (session.sales.name && !session.sales.city) {
+            await sendWhatsApp(from, `Thanks, ${session.sales.name}! May I know your city?`);
+          } else if (!session.sales.name && session.sales.city) {
+            await sendWhatsApp(from, `Thanks! May I know your name?`);
+          } else if (!session.sales.name && !session.sales.city) {
+            await sendWhatsApp(from, "May I know your name and city? For example: Rahul Pune or name: Rahul, city: Pune");
+          }
         }
         try {
           const { upsertDocuments } = require("../utils/rag");
