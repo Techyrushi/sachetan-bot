@@ -91,7 +91,6 @@ router.post("/upload", auth, upload.single("file"), async (req, res) => {
       const workbook = xlsx.readFile(filePath);
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
-      // Convert to CSV format which is better for text embedding than raw values
       content = xlsx.utils.sheet_to_csv(sheet);
     } else if (ext === ".csv") {
       const results = [];

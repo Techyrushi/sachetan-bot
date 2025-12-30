@@ -355,5 +355,5 @@ module.exports = {
       return false;
     }
   },
-  generateAnswer // Exporting this for testing
+  generateAnswer
 };
