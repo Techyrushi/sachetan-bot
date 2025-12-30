@@ -334,7 +334,7 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
 
 *1️⃣ Buy Products* - Browse catalog & order
 *2️⃣ Order Status* - Track your shipment
-*3️⃣ AI Assistant* - Product Queries
+*3️⃣ Custom Solutions* - Specialized Packaging
 *4️⃣ FAQ & Support* - Contact Us
 
         _Reply with a number to proceed._`,
@@ -368,7 +368,7 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
 
 *1️⃣ Buy Products* - Browse catalog & order
 *2️⃣ Order Status* - Track your shipment
-*3️⃣ AI Assistant* - Product Queries
+*3️⃣ Custom Solutions* - Specialized Packaging
 *4️⃣ FAQ & Support* - Contact Us
 
         _Reply with a number to proceed._`,
@@ -397,8 +397,8 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
         session.stage = "order_status";
         await sendWhatsApp(from, "Please reply with your Order ID.");
         return res.end();
-      } else if (body === "3" || body.includes("assistant") || body.includes("faq")) {
-        session.stage = "ai_assistant";
+      } else if (body === "3" || body.includes("custom solutions") || body.includes("custom")) {
+        session.stage = "custom_solutions";
         await sendWhatsApp(
           from,
           `👋 Hi! Welcome to *Sachetan Packaging* 😊
@@ -408,11 +408,8 @@ Thank you for reaching out. I’m here to help you find the right packaging for 
 You can share:
 
 📦 What product you need packaging for (cake box, cake base, paper bag, etc.)
-
 📏 Size or usage (for example: 1 kg cake)
-
 🎨 Whether you need plain or printed boxes
-
 🔢 Approximate quantity
 
 Even if you’re not sure about all the details, that’s absolutely fine — just tell me what you know, and I’ll guide you step by step to the best option.
