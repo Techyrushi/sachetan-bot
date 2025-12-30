@@ -313,7 +313,7 @@ router.post("/", async (req, res) => {
       const logoUrl = `${"https://sachetanpackaging.in"}/assets/uploads/logo.png`;
 
       await sendWhatsApp(from, "", { mediaUrl: logoUrl });
-      await new Promise(r => setTimeout(r, 2000)); // Wait 1.5s for media to arrive first
+      await new Promise(r => setTimeout(r, 5000)); // Wait 1.5s for media to arrive first
       await sendWhatsApp(
         from,
         `🌟 *Welcome to Sachetan Packaging*
@@ -334,7 +334,7 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
 
 *1️⃣ Buy Products* - Browse catalog & order
 *2️⃣ Order Status* - Track your shipment
-*3️⃣ Custom Solutions* - Specialized Packaging
+*3️⃣ AI Assistant* - Product Queries
 *4️⃣ FAQ & Support* - Contact Us
 
         _Reply with a number to proceed._`,
@@ -347,7 +347,7 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
       sessions[from] = { stage: "menu" };
       const logoUrl = `${"https://sachetanpackaging.in"}/assets/uploads/logo.png`;
       await sendWhatsApp(from, "", { mediaUrl: logoUrl });
-      await new Promise(r => setTimeout(r, 2000)); // Wait 2s for media to arrive first 
+      await new Promise(r => setTimeout(r, 5000)); // Wait 5s for media to arrive first 
       await sendWhatsApp(
         from,
         `🌟 *Welcome to Sachetan Packaging*
@@ -368,7 +368,7 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
 
 *1️⃣ Buy Products* - Browse catalog & order
 *2️⃣ Order Status* - Track your shipment
-*3️⃣ Custom Solutions* - Specialized Packaging
+*3️⃣ AI Assistant* - Product Queries
 *4️⃣ FAQ & Support* - Contact Us
 
         _Reply with a number to proceed._`,
@@ -397,8 +397,8 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
         session.stage = "order_status";
         await sendWhatsApp(from, "Please reply with your Order ID.");
         return res.end();
-      } else if (body === "3" || body.includes("custom solutions") || body.includes("custom")) {
-        session.stage = "custom_solutions";
+      } else if (body === "3" || body.includes("assistant") || body.includes("faq")) {
+        session.stage = "ai_assistant";
         await sendWhatsApp(
           from,
           `👋 Hi! Welcome to *Sachetan Packaging* 😊
