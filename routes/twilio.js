@@ -401,15 +401,23 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
         session.stage = "ai_assistant";
         await sendWhatsApp(
           from,
-          `👋 *Welcome to Sachetan Packaging Sales Support*
+          `👋 Hi! Welcome to *Sachetan Packaging* 😊
 
-I’m your packaging sales assistant. Tell me what you need:
-• Product (cake box, bag, base)
-• Size or use (e.g., 1 kg cake)
-• Printing/branding
-• Quantity
+Thank you for reaching out. I’m here to help you find the right packaging for your product.
 
-Share any details you have, and I’ll guide you step-by-step.`
+You can share:
+
+📦 What product you need packaging for (cake box, cake base, paper bag, etc.)
+
+📏 Size or usage (for example: 1 kg cake)
+
+🎨 Whether you need plain or printed boxes
+
+🔢 Approximate quantity
+
+Even if you’re not sure about all the details, that’s absolutely fine — just tell me what you know, and I’ll guide you step by step to the best option.
+
+How can I assist you today?`
         );
         return res.end();
       } else if (body === "4" || body.includes("support")) {
