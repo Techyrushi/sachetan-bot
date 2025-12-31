@@ -236,7 +236,7 @@ router.delete("/documents/:id", auth, async (req, res) => {
     const { doc_id, source_type, source_name } = rows[0];
 
     // Delete from Pinecone
-    const pineconeDeleted = await deleteDocument(docId);
+    const pineconeDeleted = await deleteDocument(doc_id);
     if (!pineconeDeleted) {
         // We throw an error so the user knows it failed. 
         // We do NOT delete from MySQL so the user can try again.
