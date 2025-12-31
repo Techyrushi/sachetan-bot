@@ -333,4 +333,25 @@ router.post("/product", auth, upload.array("images", 10), async (req, res) => {
   }
 });
 
+// 7. GET CHAT USERS (SESSIONS)
+router.get("/chat/users", auth, async (req, res) => {
+  try {
+    const [rows] = await pool.query("SELECT * FROM tbl_chat_sessions ORDER BY last_message_at DESC");
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 8. GET CHAT HISTORY FOR A USER
+router.get("/chat/history/:phone", auth, async (req, res) => {
+  const { phone } = req.params;
+  try {
+    const [rows] = await pool.query("SELECT * FROM tbl_chat_history WHERE phone = ? ORDER BY created_at ASC", [phone]);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

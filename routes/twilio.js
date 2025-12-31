@@ -49,11 +49,45 @@ async function ensureSessionTable() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
+
+    // Chat History Table
+    await mysqlPool.query(`
+      CREATE TABLE IF NOT EXISTS tbl_chat_history (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        phone VARCHAR(20) NOT NULL,
+        sender ENUM('user', 'bot') NOT NULL,
+        message TEXT,
+        media_url TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_phone (phone),
+        INDEX idx_created_at (created_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
   } catch (err) {
     console.error("Session table error:", err);
   }
 }
 ensureSessionTable();
+
+async function logChatToDB(phone, sender, message, mediaUrl = null) {
+  try {
+    await mysqlPool.query(
+      "INSERT INTO tbl_chat_history (phone, sender, message, media_url) VALUES (?, ?, ?, ?)",
+      [phone, sender, message, mediaUrl]
+    );
+  } catch (err) {
+    console.error("Error logging chat to DB:", err);
+  }
+}
+
+async function sendAndLog(to, body, options = {}) {
+  try {
+    await sendWhatsApp(to, body, options);
+    await logChatToDB(to, 'bot', body, options.mediaUrl);
+  } catch (err) {
+    console.error("Error in sendAndLog:", err);
+  }
+}
 
 async function updateSessionTimestamp(phone, stage) {
   try {
@@ -96,7 +130,7 @@ async function getLatestCounter(counterType) {
 // Add this helper function to split long messages
 async function sendSplitMessage(phoneNumber, message, maxLength = 1500) {
   if (message.length <= maxLength) {
-    await sendWhatsApp(phoneNumber, message);
+    await sendAndLog(phoneNumber, message);
     return;
   }
 
@@ -110,7 +144,7 @@ async function sendSplitMessage(phoneNumber, message, maxLength = 1500) {
       (currentMessage + paragraph + "\n\n").length > maxLength &&
       currentMessage
     ) {
-      await sendWhatsApp(phoneNumber, currentMessage.trim());
+      await sendAndLog(phoneNumber, currentMessage.trim());
       currentMessage = paragraph + "\n\n";
     } else {
       currentMessage += paragraph + "\n\n";
@@ -119,7 +153,7 @@ async function sendSplitMessage(phoneNumber, message, maxLength = 1500) {
 
   // Send any remaining content
   if (currentMessage.trim()) {
-    await sendWhatsApp(phoneNumber, currentMessage.trim());
+    await sendAndLog(phoneNumber, currentMessage.trim());
   }
 }
 
@@ -305,7 +339,7 @@ cron.schedule("* * * * *", async () => {
     booking.status = "expired";
     await booking.save();
 
-    await sendWhatsApp(
+    await sendAndLog(
       booking.whatsapp,
       `❌ *Payment Link Expired*\n\nYour payment link for booking ${booking.bookingId} has expired. Please book again to confirm your slot.\n\nReply 'menu' to return to main menu.`
     );
@@ -326,6 +360,11 @@ router.post("/", async (req, res) => {
 
     await updateSessionTimestamp(from, router.sessions && router.sessions[from] ? router.sessions[from].stage : 'menu');
 
+    // Log incoming text if present
+    if (req.body.Body) {
+        await logChatToDB(from, 'user', req.body.Body);
+    }
+
     // Handle Media Uploads
     if (numMedia > 0) {
       const mediaUrl = req.body.MediaUrl0;
@@ -335,21 +374,24 @@ router.post("/", async (req, res) => {
       
       try {
         await downloadMedia(mediaUrl, filename);
-        await sendWhatsApp(from, "✅ We have received your file. Our team will review it and get back to you with a customized solution.");
+        await sendAndLog(from, "✅ We have received your file. Our team will review it and get back to you with a customized solution.");
         
         const localMediaUrl = `${process.env.BASE_URL || "https://support.sachetanpackaging.in"}/uploads/${filename}`;
         
+        await logChatToDB(from, 'user', '[Media Upload]', localMediaUrl);
+
         // Log to Excel
         await logUserMedia(from, localMediaUrl);
 
         // Log to Sheets or notify admin
         await logConversation({
           phone: from,
-          name: "User Media",
-          city: "Unknown",
+          name: router.sessions?.[from]?.sales?.name || "User Media",
+          city: router.sessions?.[from]?.sales?.city || "Unknown",
           stage: "media_upload",
           message: `[Media Upload] ${localMediaUrl}`,
-          reply: "File received"
+          reply: "File received",
+          mediaUrl: localMediaUrl
         });
         
         return res.end();
@@ -406,9 +448,9 @@ router.post("/", async (req, res) => {
       sessions[from] = { stage: "menu" };
       const logoUrl = `${"https://sachetanpackaging.in"}/assets/uploads/logo.png`;
 
-      await sendWhatsApp(from, "", { mediaUrl: logoUrl });
+      await sendAndLog(from, "", { mediaUrl: logoUrl });
       await new Promise((r) => setTimeout(r, 3000)); // Wait 1.5s for media to arrive first
-      await sendWhatsApp(
+      await sendAndLog(
         from,
         `🌟 *Welcome to Sachetan Packaging*
 _Quality Packaging Solutions Since 2011_
@@ -438,9 +480,9 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
     if (!sessions[from]) {
       sessions[from] = { stage: "menu" };
       const logoUrl = `${"https://sachetanpackaging.in"}/assets/uploads/logo.png`;
-      await sendWhatsApp(from, "", { mediaUrl: logoUrl });
+      await sendAndLog(from, "", { mediaUrl: logoUrl });
       await new Promise((r) => setTimeout(r, 3000)); // Wait 5s for media to arrive first
-      await sendWhatsApp(
+      await sendAndLog(
         from,
         `🌟 *Welcome to Sachetan Packaging*
 _Quality Packaging Solutions Since 2011_
@@ -477,7 +519,7 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
           "SELECT `tcat_id`,`tcat_name` FROM `tbl_top_category` ORDER BY `tcat_name` ASC"
         );
         if (!topCats.length) {
-          await sendWhatsApp(
+          await sendAndLog(
             from,
             "No categories available. Please try again later."
           );
@@ -489,7 +531,7 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
           msg += `*${i + 1}️⃣ ${c.tcat_name}*\n`;
         });
         msg += "\nReply with the number.";
-        await sendWhatsApp(from, msg);
+        await sendAndLog(from, msg);
         return res.end();
       } else if (
         body === "2" ||
@@ -497,7 +539,7 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
         body.includes("ai")
       ) {
         session.stage = "ai_assistant";
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           `👋 Hi! Welcome to *Sachetan Packaging* 😊
 We offer *customized packaging solutions* just for you!
@@ -512,7 +554,7 @@ Not sure about all details? No worries - just share what you can, and I’ll hel
         );
         return res.end();
       } else if (body === "3" || body.includes("support") || body.includes("faq")) {
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           `🏢 *Contact & Support*
 
@@ -544,12 +586,12 @@ Reply 'menu' to return to main menu.`
         });
         dateOptions += "\nReply with the date number.";
         session.availableDates = availableDates;
-        await sendWhatsApp(from, dateOptions);
+        await sendAndLog(from, dateOptions);
         return res.end();
       } else if (body === "my bookings") {
         const bookings = await Booking.find({ whatsapp: from });
         if (!bookings.length) {
-          await sendWhatsApp(
+          await sendAndLog(
             from,
             "📭 *You have no bookings.*\n\nReply with 'menu' to return to main menu."
           );
@@ -567,7 +609,7 @@ Reply 'menu' to return to main menu.`
             text += `📊 Status: ${b.status}\n\n`;
           });
           text += "Reply with 'menu' to return to main menu.";
-          await sendWhatsApp(from, text);
+          await sendAndLog(from, text);
         }
         return res.end();
       } else if (body.includes("availability")) {
@@ -581,7 +623,7 @@ Reply 'menu' to return to main menu.`
         });
         dateOptions += "\nReply with the date number.";
         session.availableDates = availableDates;
-        await sendWhatsApp(from, dateOptions);
+        await sendAndLog(from, dateOptions);
         return res.end();
       } else if (body.includes("pricing") || body.includes("rules")) {
         let pricingInfo = `💰 *NashikPicklers Pricing & Rules*\n\n*Court Pricing (per player):*\n`;
@@ -609,10 +651,10 @@ Reply 'menu' to return to main menu.`
 
 Reply with 'menu' to return to main menu.`;
 
-        await sendWhatsApp(from, pricingInfo);
+        await sendAndLog(from, pricingInfo);
         return res.end();
       } else if (body.includes("contact") || body.includes("admin")) {
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           `📞 *Contact NashikPicklers Admin*
 
@@ -669,7 +711,7 @@ Reply with 'menu' to return to main menu.`
         body === "Thank you for confirming my booking." ||
         body.includes(["Hi", "Thank you"])
       ) {
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           `🧰 *Sachetan Packaging*
 
@@ -686,10 +728,10 @@ Reply with a number or option name.`
           const result = await queryRag(body);
           let answer = result.answer || "I'm not sure about that. Reply 'menu' to see options.";
           
-          await sendWhatsApp(from, answer);
+          await sendAndLog(from, answer);
           if (result.mediaUrls && result.mediaUrls.length > 0) {
               for (const mediaUrl of result.mediaUrls) {
-                  await sendWhatsApp(from, "", { mediaUrl });
+                  await sendAndLog(from, "", { mediaUrl });
               }
           }
 
@@ -708,7 +750,7 @@ Reply with a number or option name.`
             );
           } catch { }
         } catch (e) {
-          await sendWhatsApp(
+          await sendAndLog(
             from,
             "❌ Invalid selection. Reply 'menu' to see options."
           );
@@ -730,7 +772,7 @@ Reply with a number or option name.`
         // Process AI request immediately
         try {
           const result = await queryRag(question);
-          await sendWhatsApp(
+          await sendAndLog(
             from,
             result.answer || "No answer available right now."
           );
@@ -748,7 +790,7 @@ Reply with a number or option name.`
             );
           } catch { }
         } catch (e) {
-          await sendWhatsApp(
+          await sendAndLog(
             from,
             "⚠️ Oops! Our assistant is taking a short break. Please try again in a few moments - we’ll be right back to help you 😊"
           );
@@ -759,7 +801,7 @@ Reply with a number or option name.`
         session.stage = session.previousStage;
         delete session.pendingQuestion;
         delete session.previousStage;
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           "Okay, continuing with your order. Please make a selection."
         );
@@ -777,7 +819,7 @@ Reply with a number or option name.`
           session.previousStage = session.stage;
           session.pendingQuestion = body;
           session.stage = "confirm_exit_flow";
-          await sendWhatsApp(
+          await sendAndLog(
             from,
             `⚠️ You are currently ordering. Do you want to cancel and ask: "${body}"?`,
             {
@@ -789,7 +831,7 @@ Reply with a number or option name.`
           );
           return res.end();
         }
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           "Invalid selection. Reply with the category number."
         );
@@ -802,7 +844,7 @@ Reply with a number or option name.`
         [selectedTop.tcat_id]
       );
       if (!midCats.length) {
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           "No subcategories in this category. Reply 'menu' to go back."
         );
@@ -816,7 +858,7 @@ Reply with a number or option name.`
         msg += `*${i + 1}️⃣ ${c.mcat_name}*\n`;
       });
       msg += "\nReply with the number.";
-      await sendWhatsApp(from, msg);
+      await sendAndLog(from, msg);
       return res.end();
     }
 
@@ -828,7 +870,7 @@ Reply with a number or option name.`
           session.previousStage = session.stage;
           session.pendingQuestion = body;
           session.stage = "confirm_exit_flow";
-          await sendWhatsApp(
+          await sendAndLog(
             from,
             `⚠️ You are currently ordering. Do you want to cancel and ask: "${body}"?`,
             {
@@ -840,7 +882,7 @@ Reply with a number or option name.`
           );
           return res.end();
         }
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           "Invalid selection. Reply with the subcategory number."
         );
@@ -862,7 +904,7 @@ Reply with a number or option name.`
       );
 
       if (!products.length) {
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           "No products in this category. Reply 'menu' to go back."
         );
@@ -879,7 +921,7 @@ Reply with a number or option name.`
         msg += `*${i + 1}️⃣ ${p.p_name}* - ₹${price}${old}\n`;
       });
       msg += "\nReply with the product number, or 'menu' to go back.";
-      await sendWhatsApp(from, msg);
+      await sendAndLog(from, msg);
       return res.end();
     }
 
@@ -898,7 +940,7 @@ Reply with a number or option name.`
           session.previousStage = session.stage;
           session.pendingQuestion = body;
           session.stage = "confirm_exit_flow";
-          await sendWhatsApp(
+          await sendAndLog(
             from,
             `⚠️ You are currently ordering. Do you want to cancel and ask: "${body}"?`,
             {
@@ -910,7 +952,7 @@ Reply with a number or option name.`
           );
           return res.end();
         }
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           "Invalid selection. Reply with the product number, or 'menu' to go back."
         );
@@ -953,7 +995,7 @@ Reply with a number or option name.`
         ? `https://www.sachetanpackaging.in/assets/uploads/${product.p_featured_photo}`
         : null;
 
-      await sendWhatsApp(
+      await sendAndLog(
         from,
         `📦 *${product.p_name}*
 ──────────────────
@@ -973,7 +1015,7 @@ _Reply 'menu' to go back._`,
           session.previousStage = session.stage;
           session.pendingQuestion = body;
           session.stage = "confirm_exit_flow";
-          await sendWhatsApp(
+          await sendAndLog(
             from,
             `⚠️ You are currently ordering. Do you want to cancel and ask: "${body}"?`,
             {
@@ -985,7 +1027,7 @@ _Reply 'menu' to go back._`,
           );
           return res.end();
         }
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           "Invalid quantity. Please enter a positive number."
         );
@@ -1014,7 +1056,7 @@ _Reply 'menu' to go back._`,
 
       // Ask for Customer Details
       session.stage = "ask_name";
-      await sendWhatsApp(from, "👤 *Please enter your Full Name:*");
+      await sendAndLog(from, "👤 *Please enter your Full Name:*");
       return res.end();
     }
 
@@ -1055,7 +1097,7 @@ _Reply 'menu' to go back._`,
           body.toLowerCase() === "Thank you for confirming my booking."
         ) {
           session.stage = "menu";
-          await sendWhatsApp(
+          await sendAndLog(
             from,
             "Order cancelled. Reply 'menu' to see options."
           );
@@ -1065,14 +1107,14 @@ _Reply 'menu' to go back._`,
 
       session.orderDraft.customerName = body;
       session.stage = "ask_address";
-      await sendWhatsApp(from, "📍 *Please enter your Delivery Address:*");
+      await sendAndLog(from, "📍 *Please enter your Delivery Address:*");
       return res.end();
     }
 
     if (session.stage === "ask_address") {
       session.orderDraft.address = body;
       session.stage = "ask_pincode";
-      await sendWhatsApp(from, "📮 *Please enter your Pincode:*");
+      await sendAndLog(from, "📮 *Please enter your Pincode:*");
       return res.end();
     }
 
@@ -1083,7 +1125,7 @@ _Reply 'menu' to go back._`,
       const draft = session.orderDraft;
       const item = draft.items[0]; // Currently single item flow
 
-      await sendWhatsApp(
+      await sendAndLog(
         from,
         `🧾 *Order Summary*
         
@@ -1143,7 +1185,7 @@ _Reply 'menu' to go back._`,
         await order.save();
         const payUrl = `${process.env.BASE_URL || "http://localhost:4000"
           }/payment/product?order=${order._id}`;
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           `💳 *Payment Link Generated*
 Order ID: ${orderId}
@@ -1218,13 +1260,13 @@ Reply 'menu' to return.`,
         body === "good night"
       ) {
         session.stage = "menu";
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           "Order cancelled. Reply 'menu' to see options."
         );
         return res.end();
       } else {
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           "Reply 'confirm' to proceed or 'menu' to cancel."
         );
@@ -1263,51 +1305,50 @@ Reply 'menu' to return.`,
       }
       function extractNameCity(t, askedHint) {
         const s = (t || "").trim().replace(/\s+/g, " ");
-        let name = null,
-          city = null;
+        // Blocklist for common non-name words
+        const blocklist = ["give", "send", "show", "want", "need", "buy", "order", "price", "cost", "how", "what", "where", "when", "cake", "box", "bag", "base", "image", "pic", "picture", "pdf", "file", "of", "the", "and", "for", "with", "name", "is", "my", "i", "am"];
+
+        const isValidName = (n) => {
+          if (!n || n.length < 2) return false;
+          const words = n.split(" ");
+          if (words.length > 3) return false; 
+          if (words.some(w => blocklist.includes(w.toLowerCase()))) return false;
+          return /^[a-zA-Z ]+$/.test(n);
+        };
+        
+        const isValidCity = (c) => {
+          if (!c || c.length < 2) return false;
+          if (blocklist.includes(c.toLowerCase())) return false;
+          return /^[a-zA-Z ]+$/.test(c);
+        };
+
+        let name = null, city = null;
         let m;
+        
         m = s.match(/name\s*[:\-]\s*([a-zA-Z ]{2,})/i);
-        if (m) name = m[1].trim();
+        if (m && isValidName(m[1].trim())) name = m[1].trim();
+        
         m = s.match(/\bcity\s*[:\-]\s*([a-zA-Z ]{2,})/i);
-        if (m) city = m[1].trim();
+        if (m && isValidCity(m[1].trim())) city = m[1].trim();
+        
         m = s.match(/my name is\s+([a-zA-Z ]{2,})/i);
-        if (!name && m) name = m[1].trim();
+        if (!name && m && isValidName(m[1].trim())) name = m[1].trim();
+        
         m = s.match(/i am\s+([a-zA-Z ]{2,})/i);
-        if (!name && m) name = m[1].trim();
+        if (!name && m && isValidName(m[1].trim())) name = m[1].trim();
+        
         m = s.match(/\bfrom\s+([a-zA-Z ]{2,})/i);
-        if (!city && m) city = m[1].trim();
-        if (askedHint) {
-          const segments = s
-            .split(/[,\|]+/)
-            .map((x) => x.trim())
-            .filter(Boolean);
-          if (!name && !city && segments.length >= 2) {
-            const lastSeg = segments[segments.length - 1]
-              .replace(/\bcity\b:?/i, "")
-              .trim();
-            const nameSeg = segments.slice(0, -1).join(" ").trim();
-            if (
-              /^[a-zA-Z ]{2,}$/.test(nameSeg) &&
-              /^[a-zA-Z ]{2,}$/.test(lastSeg)
-            ) {
-              name = nameSeg;
-              city = lastSeg;
-            }
-          }
-          if (!name || !city) {
-            const tokens = s.split(/\s+/).filter(Boolean);
-            if (!name && !city && tokens.length >= 2) {
-              const cityCandidate = tokens[tokens.length - 1];
-              const nameCandidate = tokens
-                .slice(0, tokens.length - 1)
-                .join(" ");
-              if (
-                /^[a-zA-Z ]{2,}$/.test(nameCandidate) &&
-                /^[a-zA-Z ]{2,}$/.test(cityCandidate)
-              ) {
-                name = nameCandidate;
-                city = cityCandidate;
-              }
+        if (!city && m && isValidCity(m[1].trim())) city = m[1].trim();
+        
+        if (askedHint && !name && !city) {
+          const tokens = s.split(" ");
+          if (tokens.length >= 2) {
+            const cityCandidate = tokens[tokens.length - 1];
+            const nameCandidate = tokens.slice(0, -1).join(" ");
+            
+            if (isValidName(nameCandidate) && isValidCity(cityCandidate)) {
+              name = nameCandidate;
+              city = cityCandidate;
             }
           }
         }
@@ -1347,7 +1388,7 @@ Reply 'menu' to return.`,
         question.toLowerCase() === "good night"
       ) {
         session.stage = "menu";
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           `🧰 *Sachetan Packaging*
           
@@ -1365,12 +1406,12 @@ Reply with a number.`
         const result = await queryRag(question);
         let reply = result.answer || "No answer available right now.";
         
-        await sendWhatsApp(from, reply);
+        await sendAndLog(from, reply);
         
         // Send media separately if available
         if (result.mediaUrls && result.mediaUrls.length > 0) {
             for (const mediaUrl of result.mediaUrls) {
-                await sendWhatsApp(from, "", { mediaUrl });
+                await sendAndLog(from, "", { mediaUrl });
             }
         }
 
@@ -1424,20 +1465,20 @@ Reply with a number.`
           (!session.sales.name || !session.sales.city)
         ) {
           session.sales.askedNameCity = true;
-          await sendWhatsApp(
+          await sendAndLog(
             from,
             "May I know your name and city? For example: Rahul Pune or name: Rahul, city: Pune"
           );
         } else if (session.sales.askedNameCity) {
           if (session.sales.name && !session.sales.city) {
-            await sendWhatsApp(
+            await sendAndLog(
               from,
               `Thanks, ${session.sales.name}! May I know your city?`
             );
           } else if (!session.sales.name && session.sales.city) {
-            await sendWhatsApp(from, `Thanks! May I know your name?`);
+            await sendAndLog(from, `Thanks! May I know your name?`);
           } else if (!session.sales.name && !session.sales.city) {
-            await sendWhatsApp(
+            await sendAndLog(
               from,
               "May I know your name and city? For example: Rahul Pune or name: Rahul, city: Pune"
             );
@@ -1457,7 +1498,7 @@ Reply with a number.`
           );
         } catch { }
       } catch (e) {
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           "⚠️ Oops! Our assistant is taking a short break. Please try again in a few moments - we’ll be right back to help you 😊"
         );
@@ -1475,7 +1516,7 @@ Reply with a number.`
         idx > availableDates.length ||
         availableDates[idx - 1].isPast
       ) {
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           "❌ Invalid date selection. Please reply with a number from the list."
         );
@@ -1564,7 +1605,7 @@ Reply with a number.`
         });
         dateOptions += "\nReply with the date number.";
         session.availableDates = availableDates;
-        await sendWhatsApp(from, dateOptions);
+        await sendAndLog(from, dateOptions);
         return res.end();
       } else if (
         body === "menu" ||
@@ -1608,7 +1649,7 @@ Reply with a number.`
         body.includes(["Hi", "Thank you"])
       ) {
         session.stage = "menu";
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           `1. Book Court
 2. My Bookings
@@ -1620,7 +1661,7 @@ Reply with the number or option name.`
         );
         return res.end();
       } else {
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           "Please reply with 'book' to make a booking or 'menu' to return to main menu."
         );
@@ -1638,7 +1679,7 @@ Reply with the number or option name.`
         idx > availableDates.length ||
         availableDates[idx - 1].isPast
       ) {
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           "❌ Invalid date selection. Please reply with a number from the list."
         );
@@ -1667,14 +1708,14 @@ Reply with the number or option name.`
       playerOptions += `Minimum: 2 players\nMaximum: 4 players per court\n\n`;
       playerOptions += `Reply with the number of players (2, 3, or 4).`;
 
-      await sendWhatsApp(from, playerOptions);
+      await sendAndLog(from, playerOptions);
       return res.end();
     }
 
     if (session.stage === "choose_players") {
       const playerCount = parseInt(body);
       if (isNaN(playerCount) || playerCount < 2 || playerCount > 4) {
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           "❌ Invalid player count. Please reply with 2, 3, or 4 players."
         );
@@ -1685,7 +1726,7 @@ Reply with the number or option name.`
 
       const slots = await Slot.find({ status: "Active" });
       if (!slots.length) {
-        await sendWhatsApp(from, "No slots configured. Contact admin.");
+        await sendAndLog(from, "No slots configured. Contact admin.");
         delete sessions[from];
         return res.end();
       }
@@ -1720,7 +1761,7 @@ Reply with the number or option name.`
       }
 
       if (!availableSlots.length) {
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           `❌ No available time slots for ${session.draft.dateDisplay} with ${playerCount} players.
 
@@ -1761,7 +1802,7 @@ Please reply with:
 
       session.slots = availableSlots;
       session.stage = "choose_slot";
-      await sendWhatsApp(from, msg);
+      await sendAndLog(from, msg);
       return res.end();
     }
 
@@ -1783,7 +1824,7 @@ Please reply with:
         playerOptions += `Minimum: 2 players\nMaximum: 4 players per court\n\n`;
         playerOptions += `Reply with the number of players (2, 3, or 4).`;
 
-        await sendWhatsApp(from, playerOptions);
+        await sendAndLog(from, playerOptions);
         return res.end();
       } else if (
         body === "hi" ||
@@ -1824,7 +1865,7 @@ Please reply with:
         body.includes(["Hi", "Thank you"])
       ) {
         session.stage = "menu";
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           `1. Book Court
 2. My Bookings
@@ -1836,7 +1877,7 @@ Reply with the number or option name.`
         );
         return res.end();
       } else {
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           "Please reply with 'back' to choose different players or 'menu' for main menu."
         );
@@ -1855,14 +1896,14 @@ Reply with the number or option name.`
         playerOptions += `Minimum: 2 players\nMaximum: 4 players per court\n\n`;
         playerOptions += `Reply with the number of players (2, 3, or 4).`;
 
-        await sendWhatsApp(from, playerOptions);
+        await sendAndLog(from, playerOptions);
         return res.end();
       }
 
       const idx = parseInt(body);
       const slots = session.slots || [];
       if (isNaN(idx) || idx < 1 || idx > slots.length) {
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           "❌ Invalid slot. Reply with the slot number or 'back' to choose players."
         );
@@ -1892,7 +1933,7 @@ Reply with the number or option name.`
       }
 
       if (!availableCourts.length) {
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           "No courts available for this time slot. Please select another time slot."
         );
@@ -1914,7 +1955,7 @@ Reply with the number or option name.`
 
       session.courts = availableCourts;
       session.stage = "choose_court";
-      await sendWhatsApp(from, msg);
+      await sendAndLog(from, msg);
       return res.end();
     }
 
@@ -1930,14 +1971,14 @@ Reply with the number or option name.`
         });
         msg += "\nReply with the slot number.";
         msg += "\nReply 'back' to choose different number of players.";
-        await sendWhatsApp(from, msg);
+        await sendAndLog(from, msg);
         return res.end();
       }
 
       const idx = parseInt(body);
       const courts = session.courts || [];
       if (isNaN(idx) || idx < 1 || idx > courts.length) {
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           "❌ Invalid court. Reply with court number or 'back' for time slots."
         );
@@ -1994,7 +2035,7 @@ Reply 'menu' to return to main menu.`;
       session.bookingId = booking._id;
       session.stage = "payment_pending";
 
-      await sendWhatsApp(from, summary);
+      await sendAndLog(from, summary);
       return res.end();
     }
 
@@ -2002,7 +2043,7 @@ Reply 'menu' to return to main menu.`;
       if (body.includes("paid")) {
         const booking = await Booking.findById(session.bookingId);
         if (!booking) {
-          await sendWhatsApp(from, "Booking not found.");
+          await sendAndLog(from, "Booking not found.");
           delete sessions[from];
           return res.end();
         }
@@ -2016,7 +2057,7 @@ Reply 'menu' to return to main menu.`;
         );
 
         if (!isAvailable) {
-          await sendWhatsApp(
+          await sendAndLog(
             from,
             "Sorry, this court doesn't have enough capacity anymore. Please try booking another court or time slot."
           );
@@ -2039,7 +2080,7 @@ Reply 'menu' to return to main menu.`;
         const receiptUrl = `${process.env.BASE_URL || "http://localhost:4000"
           }/payment/receipt/${booking._id}`;
 
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           `✅ *Booking Confirmed!*
 
@@ -2065,12 +2106,12 @@ Reply 'menu' for main menu.`
         if (booking) {
           booking.status = "cancelled";
           await booking.save();
-          await sendWhatsApp(
+          await sendAndLog(
             from,
             "❌ Booking cancelled successfully. If your payment was successful for this cancelled booking, please contact our support team for a refund. Reply 'menu' to return to main menu."
           );
         } else {
-          await sendWhatsApp(
+          await sendAndLog(
             from,
             "Booking not found. Reply 'menu' to return to main menu."
           );
@@ -2079,7 +2120,7 @@ Reply 'menu' for main menu.`
         return res.end();
       } else if (body === "menu") {
         session.stage = "menu";
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           `1. Book Court
 2. My Bookings
@@ -2091,7 +2132,7 @@ Reply with the number or option name.`
         );
         return res.end();
       } else {
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           "Please reply with 'cancel' to cancel your booking, or 'menu' to return to the main menu."
         );
@@ -2102,7 +2143,7 @@ Reply with the number or option name.`
     if (session.stage === "booking_confirmed") {
       if (body === "menu") {
         session.stage = "menu";
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           `1. Book Court
 2. My Bookings
@@ -2114,7 +2155,7 @@ Reply with the number or option name.`
         );
         return res.end();
       } else {
-        await sendWhatsApp(
+        await sendAndLog(
           from,
           "Please reply with 'menu' to return to main menu."
         );
@@ -2123,7 +2164,7 @@ Reply with the number or option name.`
     }
 
     // Default fallback
-    await sendWhatsApp(
+    await sendAndLog(
       from,
       "Sorry, I didn't understand. Reply 'hi' to restart or 'menu' to see options."
     );
@@ -2132,7 +2173,7 @@ Reply with the number or option name.`
     console.error("Error in Twilio webhook:", error);
     const phoneNumber = req.body.From || "unknown";
     try {
-      await sendWhatsApp(
+      await sendAndLog(
         phoneNumber,
         "Sorry, something went wrong. Please try again later or contact support."
       );

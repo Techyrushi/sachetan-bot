@@ -133,7 +133,7 @@ async function appendRow(range, values) {
 
 async function logConversation(data) {
   const range = process.env.GOOGLE_SHEETS_CONVERSATIONS_RANGE || "Conversations!A1";
-  await ensureHeaders(range, ["Timestamp", "Phone", "Name", "City", "Stage", "Message", "Reply"]);
+  await ensureHeaders(range, ["Timestamp", "Phone", "Name", "City", "Stage", "Message", "Reply", "Media URL"]);
   const values = [
     new Date().toISOString(),
     data.phone || "",
@@ -142,6 +142,7 @@ async function logConversation(data) {
     data.stage || "",
     data.message || "",
     data.reply || "",
+    data.mediaUrl || ""
   ];
   return appendRow(range, values);
 }
