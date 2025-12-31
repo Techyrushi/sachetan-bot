@@ -220,9 +220,27 @@ async function queryRag(query, topK = 4, collectionName = DEFAULT_COLLECTION) {
   }
 
   const context = docs.join("\n\n");
-  const answer = await generateAnswer(query, context);
+  const rawAnswer = await generateAnswer(query, context);
   
-  return { answer, context, matches };
+  // Extract Media URLs
+  const mediaUrls = [];
+  let answer = rawAnswer;
+  
+  const mediaMatches = [...answer.matchAll(/\[MEDIA:\s*(.*?)\]/g)];
+  if (mediaMatches.length > 0) {
+      mediaMatches.forEach(match => {
+          let url = match[1].trim();
+          // Clean URL
+          url = url.replace(/^['"`]|['"`]$/g, "");
+          if (url.startsWith("http")) {
+              mediaUrls.push(url);
+          }
+      });
+      // Remove tags from text
+      answer = answer.replace(/\[MEDIA:\s*.*?\]/g, "").trim();
+  }
+  
+  return { answer, mediaUrls, context, matches };
 }
 
 async function generateAnswer(prompt, context) {
@@ -239,7 +257,7 @@ CORE BEHAVIOR RULES:
 1) Polite, friendly, professional, human tone.
 2) Keep responses short, clear, conversational (WhatsApp-style).
 3) Never sound robotic or overly technical.
-4) If the user mixes languages (English/Hindi/Marathi), mirror their style.
+4) ALWAYS Reply in the same language as the user (English, Hindi, Marathi, Hinglish, etc.).
 5) Stay calm, helpful, solution-oriented.
 
 BUSINESS SCOPE (STRICT):
@@ -260,8 +278,8 @@ IMAGE HANDLING:
 If the context contains "Image Available: http...", and you recommend that product, you MUST append the tag [MEDIA:URL] at the end of your response.
 Example: "We have a great Printed Cake Box. [MEDIA:https://support.sachetanpackaging.in/uploads/cakebox.jpg]"
 ONLY use images explicitly provided in the context.
-
-User: "Send me a pizza."
+DO NOT wrap the URL in quotes or backticks inside the tag.
+DO NOT use markdown link syntax like [text](url). Just [MEDIA:URL].
 You: "I can't send a pizza, but I can send you the best pizza boxes in the market! 🍕 What size boxes are you looking for?"
 
 Never simply say "No" or "I can't". Be OPTIMISTIC and pivot back to packaging solutions.

@@ -138,7 +138,29 @@ Please arrive 10 minutes early for check-in.`);
         }
       }
     } catch (err) {
-      console.error("Reminder cron error:", err);
+      console.error("Vector upsert cron error:", err);
+    }
+  });
+
+  // 7-day reminder
+  cron.schedule("0 10 * * *", async () => {
+    try {
+      const [users] = await mysqlPool.query(
+        "SELECT phone, stage FROM tbl_chat_sessions WHERE DATEDIFF(NOW(), last_message_at) = 7"
+      );
+      for (const user of users) {
+        await sendWhatsApp(
+          user.phone,
+          `👋 Hi! It's been a while since we last chatted. 
+          
+Are you still looking for packaging solutions? 📦
+We have new designs and offers!
+
+Reply 'menu' to see our latest catalog or ask me anything!`
+        );
+      }
+    } catch (err) {
+      console.error("7-day reminder error:", err);
     }
   });
 }

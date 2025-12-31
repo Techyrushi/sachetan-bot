@@ -8,9 +8,33 @@ const Category = require("../models/Category");
 const Product = require("../models/Product");
 const Order = require("../models/Order");
 const { queryRag } = require("../utils/rag");
-const { logConversation, logLead } = require("../utils/sheets");
-// const { nanoid } = require("nanoid");
+const { logConversation, logLead, logUserMedia } = require("../utils/sheets");
 const cron = require("node-cron");
+const path = require("path");
+const fs = require("fs");
+const axios = require("axios");
+
+// Helper to download media
+async function downloadMedia(url, filename) {
+  const uploadDir = path.join(__dirname, "../public/uploads");
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  }
+  const writer = fs.createWriteStream(path.join(uploadDir, filename));
+
+  const response = await axios({
+    url,
+    method: 'GET',
+    responseType: 'stream'
+  });
+
+  response.data.pipe(writer);
+
+  return new Promise((resolve, reject) => {
+    writer.on('finish', resolve);
+    writer.on('error', reject);
+  });
+}
 
 const router = express.Router();
 
@@ -313,13 +337,18 @@ router.post("/", async (req, res) => {
         await downloadMedia(mediaUrl, filename);
         await sendWhatsApp(from, "✅ We have received your file. Our team will review it and get back to you with a customized solution.");
         
+        const localMediaUrl = `${process.env.BASE_URL || "https://support.sachetanpackaging.in"}/uploads/${filename}`;
+        
+        // Log to Excel
+        await logUserMedia(from, localMediaUrl);
+
         // Log to Sheets or notify admin
         await logConversation({
           phone: from,
           name: "User Media",
           city: "Unknown",
           stage: "media_upload",
-          message: `[Media Upload] ${mediaUrl}`,
+          message: `[Media Upload] ${localMediaUrl}`,
           reply: "File received"
         });
         
@@ -656,16 +685,13 @@ Reply with a number or option name.`
         try {
           const result = await queryRag(body);
           let answer = result.answer || "I'm not sure about that. Reply 'menu' to see options.";
-          let mediaUrl = null;
-
-          // Check for [MEDIA:URL] tag
-          const mediaMatch = answer.match(/\[MEDIA:(.*?)\]/);
-          if (mediaMatch) {
-            mediaUrl = mediaMatch[1];
-            answer = answer.replace(mediaMatch[0], "").trim();
+          
+          await sendWhatsApp(from, answer);
+          if (result.mediaUrls && result.mediaUrls.length > 0) {
+              for (const mediaUrl of result.mediaUrls) {
+                  await sendWhatsApp(from, "", { mediaUrl });
+              }
           }
-
-          await sendWhatsApp(from, answer, mediaUrl ? { mediaUrl } : {});
 
           // Optional: save to memory
           try {
@@ -1337,15 +1363,24 @@ Reply with a number.`
 
       try {
         const result = await queryRag(question);
-        const reply = result.answer || "No answer available right now.";
+        let reply = result.answer || "No answer available right now.";
+        
         await sendWhatsApp(from, reply);
+        
+        // Send media separately if available
+        if (result.mediaUrls && result.mediaUrls.length > 0) {
+            for (const mediaUrl of result.mediaUrls) {
+                await sendWhatsApp(from, "", { mediaUrl });
+            }
+        }
+
         await logConversation({
           phone: from,
           name: session.sales.name || "",
           city: session.sales.city || "",
           stage: "ai_assistant",
           message: question,
-          reply,
+          reply: result.mediaUrls && result.mediaUrls.length > 0 ? `${reply} [Media: ${result.mediaUrls.join(", ")}]` : reply,
         });
         const isLeadIntent =
           /quote|quotation|order|buy|price|bulk|custom|printed|logo|branding/i.test(

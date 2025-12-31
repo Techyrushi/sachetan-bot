@@ -53,6 +53,9 @@ async function ensureTable() {
     // Migration: Ensure source_type is VARCHAR (in case it was ENUM)
     await pool.query("ALTER TABLE tbl_ai_knowledge MODIFY COLUMN source_type VARCHAR(50) DEFAULT 'manual'");
     
+    // Migration: Ensure source_name can hold multiple URLs (TEXT)
+    await pool.query("ALTER TABLE tbl_ai_knowledge MODIFY COLUMN source_name TEXT DEFAULT NULL");
+    
   } catch (err) {
     console.error("Auto-migration failed:", err.message);
   }
@@ -162,7 +165,7 @@ router.post("/upload", auth, upload.single("file"), async (req, res) => {
 });
 
 // 4. UPDATE DOCUMENT
-router.put("/documents/:id", auth, async (req, res) => {
+router.put("/documents/:id", auth, upload.array("images", 10), async (req, res) => {
   const { id } = req.params;
   let { title, content } = req.body;
   let updatedContent = content;
@@ -180,26 +183,34 @@ router.put("/documents/:id", auth, async (req, res) => {
     if (source_type === 'product') {
         const priceMatch = updatedContent.match(/Price:\s*(.+)/i);
         const price = priceMatch ? priceMatch[1].trim() : "";
-        const imageMatch = updatedContent.match(/Image Available:\s*(https?:\/\/[^\s]+)/i);
-        let newImageUrl = source_name;
-        if (imageMatch) {
-            const filename = imageMatch[1].trim().split("/").pop();
-            newImageUrl = `${process.env.BASE_URL}/uploads/${filename}`;
+        
+        let newImageUrls = source_name; // Keep existing by default
+        
+        // If new images are uploaded, REPLACE existing
+        if (req.files && req.files.length > 0) {
+            const urls = req.files.map(file => `${process.env.BASE_URL}/uploads/${file.filename}`);
+            newImageUrls = urls.join(","); // Comma separated for DB
         }
-        if (newImageUrl !== source_name) {
-            await pool.query("UPDATE tbl_ai_knowledge SET source_name = ? WHERE id = ?", [newImageUrl, id]);
+
+        // Update source_name if changed
+        if (newImageUrls !== source_name) {
+            await pool.query("UPDATE tbl_ai_knowledge SET source_name = ? WHERE id = ?", [newImageUrls, id]);
         }
-        if (updatedContent.includes("Image Available:")) {
-            updatedContent = updatedContent.replace(/Image Available:\s*https?:\/\/[^\s]+/i, `Image Available: ${newImageUrl}`);
-            updatedContent = updatedContent.replace(/Image Available:\s*\n\s*https?:\/\/[^\s]+/i, `Image Available: ${newImageUrl}`);
-        } else {
-            updatedContent += `\nImage Available: ${newImageUrl}`;
+
+        // Remove old Image Available lines
+        updatedContent = updatedContent.replace(/Image Available:.*(\n|$)/g, "").trim();
+
+        // Add new Image Available lines
+        const urlsArray = newImageUrls ? newImageUrls.split(",") : [];
+        if (urlsArray.length > 0) {
+            updatedContent += "\n\n" + urlsArray.map(url => `Image Available: ${url}`).join("\n");
         }
+
         metadata = {
             title,
             source: "admin_product_updated",
             type: "product",
-            imageUrl: newImageUrl,
+            imageUrl: newImageUrls, // Might be CSV
             price: price
         };
     }
@@ -210,7 +221,7 @@ router.put("/documents/:id", auth, async (req, res) => {
     // Update Pinecone (Upsert overwrites)
     await upsertDocuments([{ id: doc_id, text: updatedContent, metadata }]);
 
-    res.json({ success: true, message: "Document updated successfully." });
+    res.json({ success: true, message: "Document updated successfully.", imageUrl: source_type === 'product' ? metadata.imageUrl : null });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -220,9 +231,9 @@ router.put("/documents/:id", auth, async (req, res) => {
 router.delete("/documents/:id", auth, async (req, res) => {
   const { id } = req.params;
   try {
-    const [rows] = await pool.query("SELECT doc_id FROM tbl_ai_knowledge WHERE id = ?", [id]);
+    const [rows] = await pool.query("SELECT doc_id, source_type, source_name FROM tbl_ai_knowledge WHERE id = ?", [id]);
     if (!rows.length) return res.status(404).json({ error: "Document not found." });
-    const docId = rows[0].doc_id;
+    const { doc_id, source_type, source_name } = rows[0];
 
     // Delete from Pinecone
     const pineconeDeleted = await deleteDocument(docId);
@@ -230,6 +241,39 @@ router.delete("/documents/:id", auth, async (req, res) => {
         // We throw an error so the user knows it failed. 
         // We do NOT delete from MySQL so the user can try again.
         throw new Error("Failed to delete from AI database (Pinecone). Please try again.");
+    }
+
+    // Delete physical files if product/file
+    if ((source_type === 'product' || source_type === 'file') && source_name) {
+        // source_name can be comma-separated URLs (product) or filename (file)
+        let filenames = [];
+        
+        if (source_type === 'product') {
+            // Extract filenames from URLs
+            const urls = source_name.split(",");
+            filenames = urls.map(url => {
+                const parts = url.split("/uploads/");
+                return parts.length > 1 ? parts[1] : null;
+            }).filter(Boolean);
+        } else {
+            // source_type === 'file', source_name is likely the original filename, 
+            // BUT we stored the sanitized unique filename in uploads. 
+            // Actually, for 'file', we didn't store the unique filename in DB, we only stored originalName in source_name.
+            // Wait, looking at upload route: source_name is req.file.originalname.
+            // The unique filename is NOT stored in DB for files, only for products (in URL).
+            // For 'file' type, we can't reliably delete the file unless we query by content or store the unique filename.
+            // However, for PRODUCTS, we definitely have the full URL in source_name.
+            
+            // NOTE: For now, we will only delete product images as they have full paths.
+        }
+
+        filenames.forEach(filename => {
+            const filePath = path.join(__dirname, "../public/uploads", filename);
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+                console.log(`Deleted file: ${filePath}`);
+            }
+        });
     }
 
     // Delete from MySQL
@@ -242,22 +286,25 @@ router.delete("/documents/:id", auth, async (req, res) => {
 });
 
 // 6. ADD PRODUCT (Image + Text)
-router.post("/product", auth, upload.single("image"), async (req, res) => {
+router.post("/product", auth, upload.array("images", 10), async (req, res) => {
   const { name, description, price, category } = req.body;
-  if (!req.file) return res.status(400).json({ error: "Product image is required." });
+  if (!req.files || req.files.length === 0) return res.status(400).json({ error: "Product image is required." });
 
-  // Use the new support domain
-  const imageUrl = `${process.env.BASE_URL}/uploads/${req.file.filename}`;
-  const text = `Product: ${name}\nCategory: ${category}\nPrice: ${price}\nDescription: ${description}\nImage Available: ${imageUrl}`;
+  // Handle multiple images
+  const imageUrls = req.files.map(file => `${process.env.BASE_URL}/uploads/${file.filename}`);
+  const imageUrlsString = imageUrls.join(",");
+  
+  // Create text with all images
+  const imageLines = imageUrls.map(url => `Image Available: ${url}`).join("\n");
+  const text = `Product: ${name}\nCategory: ${category}\nPrice: ${price}\nDescription: ${description}\n${imageLines}`;
   
   const docId = `prod_${Date.now()}`;
 
   try {
-    // 1. Add to MySQL (using tbl_ai_knowledge for now, or could use tbl_product if mapped)
-    // We use source_type='product' to distinguish
+    // 1. Add to MySQL
     await pool.query(
       "INSERT INTO tbl_ai_knowledge (doc_id, title, content, source_type, source_name) VALUES (?, ?, ?, 'product', ?)",
-      [docId, name, text, imageUrl]
+      [docId, name, text, imageUrlsString]
     );
 
     // 2. Add to Pinecone
@@ -269,7 +316,7 @@ router.post("/product", auth, upload.single("image"), async (req, res) => {
               title: name, 
               source: "admin_product", 
               type: "product",
-              imageUrl: imageUrl,
+              imageUrl: imageUrlsString,
               price: price
           } 
       }]);

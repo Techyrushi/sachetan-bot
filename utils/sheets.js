@@ -165,9 +165,21 @@ async function logLead(data) {
   return appendRow(range, values);
 }
 
+async function logUserMedia(phone, mediaUrl) {
+  const range = process.env.GOOGLE_SHEETS_MEDIA_RANGE || "User Media!A1";
+  await ensureHeaders(range, ["Timestamp", "Phone", "Media URL"]);
+  const values = [
+    new Date().toISOString(),
+    phone || "",
+    mediaUrl || ""
+  ];
+  return appendRow(range, values);
+}
+
 module.exports = {
   logConversation,
   logLead,
+  logUserMedia,
   listSheets: async () => {
     const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
     const sheets = getSheetsApi();
