@@ -14,6 +14,34 @@ const cron = require("node-cron");
 
 const router = express.Router();
 
+// Ensure Session Table
+async function ensureSessionTable() {
+  try {
+    await mysqlPool.query(`
+      CREATE TABLE IF NOT EXISTS tbl_chat_sessions (
+        phone VARCHAR(20) PRIMARY KEY,
+        stage VARCHAR(50) DEFAULT 'menu',
+        last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+  } catch (err) {
+    console.error("Session table error:", err);
+  }
+}
+ensureSessionTable();
+
+async function updateSessionTimestamp(phone, stage) {
+  try {
+    await mysqlPool.query(
+      "INSERT INTO tbl_chat_sessions (phone, stage) VALUES (?, ?) ON DUPLICATE KEY UPDATE stage = ?, last_message_at = NOW()",
+      [phone, stage, stage]
+    );
+  } catch (err) {
+    console.error("Session update error:", err);
+  }
+}
+
 // Helper function to get the latest counter from database
 async function getLatestCounter(counterType) {
   try {
@@ -24,11 +52,11 @@ async function getLatestCounter(counterType) {
       return 0; // No bookings yet, start from 0
     }
 
-    if (counterType === 'booking') {
+    if (counterType === "booking") {
       // Extract number from bookingId like "NP-01" -> 1
       const match = latestBooking.bookingId.match(/NP-(\d+)/);
       return match ? parseInt(match[1]) : 0;
-    } else if (counterType === 'invoice') {
+    } else if (counterType === "invoice") {
       // Extract number from invoiceNumber like "NP-2025-01" -> 1
       const match = latestBooking.invoiceNumber.match(/NP-\d+-(\d+)/);
       return match ? parseInt(match[1]) : 0;
@@ -36,7 +64,7 @@ async function getLatestCounter(counterType) {
 
     return 0;
   } catch (error) {
-    console.error('Error getting latest counter:', error);
+    console.error("Error getting latest counter:", error);
     return 0;
   }
 }
@@ -49,16 +77,19 @@ async function sendSplitMessage(phoneNumber, message, maxLength = 1500) {
   }
 
   // Split by double newlines first to preserve paragraphs
-  const paragraphs = message.split('\n\n');
-  let currentMessage = '';
+  const paragraphs = message.split("\n\n");
+  let currentMessage = "";
 
   for (const paragraph of paragraphs) {
     // If adding this paragraph would exceed limit, send current message and start new one
-    if ((currentMessage + paragraph + '\n\n').length > maxLength && currentMessage) {
+    if (
+      (currentMessage + paragraph + "\n\n").length > maxLength &&
+      currentMessage
+    ) {
       await sendWhatsApp(phoneNumber, currentMessage.trim());
-      currentMessage = paragraph + '\n\n';
+      currentMessage = paragraph + "\n\n";
     } else {
-      currentMessage += paragraph + '\n\n';
+      currentMessage += paragraph + "\n\n";
     }
   }
 
@@ -70,18 +101,20 @@ async function sendSplitMessage(phoneNumber, message, maxLength = 1500) {
 
 // Helper function to generate Booking ID (NP-01, NP-02, etc.)
 async function generateBookingId() {
-  const latestCounter = await getLatestCounter('booking');
+  const latestCounter = await getLatestCounter("booking");
   const nextCounter = latestCounter + 1;
-  const id = `NP-${nextCounter.toString().padStart(2, '0')}`;
+  const id = `NP-${nextCounter.toString().padStart(2, "0")}`;
   return id;
 }
 
 // Helper function to generate Invoice Number (NP-2025-01, etc.)
 async function generateInvoiceNumber() {
-  const latestCounter = await getLatestCounter('invoice');
+  const latestCounter = await getLatestCounter("invoice");
   const nextCounter = latestCounter + 1;
   const currentYear = new Date().getFullYear();
-  const invoiceNo = `NP-${currentYear}-${nextCounter.toString().padStart(2, '0')}`;
+  const invoiceNo = `NP-${currentYear}-${nextCounter
+    .toString()
+    .padStart(2, "0")}`;
   return invoiceNo;
 }
 
@@ -171,7 +204,10 @@ function getDurationFromSlot(slotTime) {
 // Helper to strip HTML tags
 function stripHtml(html) {
   if (!html) return "";
-  return html.replace(/<[^>]*>?/gm, " ").replace(/\s+/g, " ").trim();
+  return html
+    .replace(/<[^>]*>?/gm, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 // Helper to check if input is likely conversational/question
@@ -258,11 +294,40 @@ function createPaymentLink(bookingId) {
   return `${baseUrl}/payment?booking=${bookingId}`;
 }
 
-
 router.post("/", async (req, res) => {
   try {
     const from = req.body.From;
     const body = (req.body.Body || "").trim().toLowerCase();
+    const numMedia = parseInt(req.body.NumMedia || 0);
+
+    await updateSessionTimestamp(from, router.sessions && router.sessions[from] ? router.sessions[from].stage : 'menu');
+
+    // Handle Media Uploads
+    if (numMedia > 0) {
+      const mediaUrl = req.body.MediaUrl0;
+      const mediaType = req.body.MediaContentType0;
+      const ext = mediaType.split("/")[1] || "bin";
+      const filename = `user_${Date.now()}.${ext}`;
+      
+      try {
+        await downloadMedia(mediaUrl, filename);
+        await sendWhatsApp(from, "✅ We have received your file. Our team will review it and get back to you with a customized solution.");
+        
+        // Log to Sheets or notify admin
+        await logConversation({
+          phone: from,
+          name: "User Media",
+          city: "Unknown",
+          stage: "media_upload",
+          message: `[Media Upload] ${mediaUrl}`,
+          reply: "File received"
+        });
+        
+        return res.end();
+      } catch (e) {
+        console.error("Media download failed:", e);
+      }
+    }
 
     const userName = from.split("+")[1] || "there";
 
@@ -313,7 +378,7 @@ router.post("/", async (req, res) => {
       const logoUrl = `${"https://sachetanpackaging.in"}/assets/uploads/logo.png`;
 
       await sendWhatsApp(from, "", { mediaUrl: logoUrl });
-      await new Promise(r => setTimeout(r, 5000)); // Wait 1.5s for media to arrive first
+      await new Promise((r) => setTimeout(r, 3000)); // Wait 1.5s for media to arrive first
       await sendWhatsApp(
         from,
         `🌟 *Welcome to Sachetan Packaging*
@@ -333,10 +398,8 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
 👇 *Please select a service:*
 
 *1️⃣ Buy Products* - Browse catalog & order
-*2️⃣ Order Status* - Track your shipment
-*3️⃣ AI Assistant* - Product Queries
-*4️⃣ FAQ & Support* - Contact Us
-
+*2️⃣ AI Assistant* - Product Queries
+*3️⃣ FAQ & Support* - Contact Us  
         _Reply with a number to proceed._`,
         { contentSid: process.env.TWILIO_CONTENT_SID_SERVICES }
       );
@@ -347,7 +410,7 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
       sessions[from] = { stage: "menu" };
       const logoUrl = `${"https://sachetanpackaging.in"}/assets/uploads/logo.png`;
       await sendWhatsApp(from, "", { mediaUrl: logoUrl });
-      await new Promise(r => setTimeout(r, 5000)); // Wait 5s for media to arrive first 
+      await new Promise((r) => setTimeout(r, 3000)); // Wait 5s for media to arrive first
       await sendWhatsApp(
         from,
         `🌟 *Welcome to Sachetan Packaging*
@@ -367,9 +430,8 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
 👇 *Please select a service:*
 
 *1️⃣ Buy Products* - Browse catalog & order
-*2️⃣ Order Status* - Track your shipment
-*3️⃣ AI Assistant* - Product Queries
-*4️⃣ FAQ & Support* - Contact Us
+*2️⃣ AI Assistant* - Product Queries
+*3️⃣ FAQ & Support* - Contact Us    
 
         _Reply with a number to proceed._`,
         { contentSid: process.env.TWILIO_CONTENT_SID_SERVICES }
@@ -382,43 +444,48 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
     if (session.stage === "menu") {
       if (body === "1" || body.includes("buy") || body.includes("product")) {
         session.stage = "shop_top_category";
-        const [topCats] = await mysqlPool.query("SELECT `tcat_id`,`tcat_name` FROM `tbl_top_category` ORDER BY `tcat_name` ASC");
+        const [topCats] = await mysqlPool.query(
+          "SELECT `tcat_id`,`tcat_name` FROM `tbl_top_category` ORDER BY `tcat_name` ASC"
+        );
         if (!topCats.length) {
-          await sendWhatsApp(from, "No categories available. Please try again later.");
+          await sendWhatsApp(
+            from,
+            "No categories available. Please try again later."
+          );
           return res.end();
         }
         session.topCats = topCats;
         let msg = "🛒 *Select a Top Category:*\n\n";
-        topCats.forEach((c, i) => { msg += `*${i + 1}️⃣ ${c.tcat_name}*\n`; });
+        topCats.forEach((c, i) => {
+          msg += `*${i + 1}️⃣ ${c.tcat_name}*\n`;
+        });
         msg += "\nReply with the number.";
         await sendWhatsApp(from, msg);
         return res.end();
-      } else if (body === "2" || body.includes("order status") || body.includes("status")) {
-        session.stage = "order_status";
-        await sendWhatsApp(from, "Please reply with your Order ID.");
-        return res.end();
-      } else if (body === "3" || body.includes("assistant") || body.includes("faq")) {
+      } else if (
+        body === "2" ||
+        body.includes("assistant") ||
+        body.includes("ai")
+      ) {
         session.stage = "ai_assistant";
         await sendWhatsApp(
           from,
           `👋 Hi! Welcome to *Sachetan Packaging* 😊
+We offer *customized packaging solutions* just for you!
 
-Thank you for reaching out. I’m here to help you find the right packaging for your product.
+Tell me:
+📦 Your product (e.g., cake box, cake base, paper bag)  
+📏 Size or usage (e.g., 1 kg cake)
+🎨 Plain or printed design
+🔢 Approx quantity
 
-You can share:
-
-📦 What product you need packaging for (cake box, cake base, paper bag, etc.)
-📏 Size or usage (for example: 1 kg cake)
-🎨 Whether you need plain or printed boxes
-🔢 Approximate quantity
-
-Even if you’re not sure about all the details, that’s absolutely fine — just tell me what you know, and I’ll guide you step by step to the best option.
-
-How can I assist you today?`
+Not sure about all details? No worries - just share what you can, and I’ll help you pick the best option! 💛`
         );
         return res.end();
-      } else if (body === "4" || body.includes("support")) {
-        await sendWhatsApp(from, `🏢 *Contact & Support*
+      } else if (body === "3" || body.includes("support") || body.includes("faq")) {
+        await sendWhatsApp(
+          from,
+          `🏢 *Contact & Support*
 
 📍 *Address:*
 Plot No. J30, Near Jai Malhar Hotel, 
@@ -434,7 +501,8 @@ sagar9994@rediffmail.com
 🌐 *Website:*
 https://sachetanpackaging.in
 
-Reply 'menu' to return to main menu.`);
+Reply 'menu' to return to main menu.`
+        );
         return res.end();
       } else if (body.includes("book") || body.includes("court")) {
         session.stage = "choose_date";
@@ -534,7 +602,8 @@ Weekends: 10:00 AM - 4:00 PM
 Reply with 'menu' to return to main menu.`
         );
         return res.end();
-      } else if (body === "hi" ||
+      } else if (
+        body === "hi" ||
         body === "hello" ||
         body === "hey" ||
         body === "hii" ||
@@ -576,9 +645,8 @@ Reply with 'menu' to return to main menu.`
           `🧰 *Sachetan Packaging*
 
 *1️⃣ Buy Products* - Browse categories and order
-*2️⃣ Order Status* - Track your order
-*3️⃣ AI Assistant* - Ask product FAQs
-*4️⃣ FAQ & Support* - Help and contact
+*2️⃣ AI Assistant* - Ask product FAQs
+*3️⃣ FAQ & Support* - Help and contact
 
 Reply with a number or option name.`
         );
@@ -587,16 +655,32 @@ Reply with a number or option name.`
         // Fallback to AI for any text that isn't a menu command
         try {
           const result = await queryRag(body);
-          await sendWhatsApp(from, result.answer || "I'm not sure about that. Reply 'menu' to see options.");
+          let answer = result.answer || "I'm not sure about that. Reply 'menu' to see options.";
+          let mediaUrl = null;
+
+          // Check for [MEDIA:URL] tag
+          const mediaMatch = answer.match(/\[MEDIA:(.*?)\]/);
+          if (mediaMatch) {
+            mediaUrl = mediaMatch[1];
+            answer = answer.replace(mediaMatch[0], "").trim();
+          }
+
+          await sendWhatsApp(from, answer, mediaUrl ? { mediaUrl } : {});
 
           // Optional: save to memory
           try {
             const { upsertDocuments } = require("../utils/rag");
-            await upsertDocuments([
-              { id: `q_${Date.now()}`, text: `Q: ${body}\nA: ${result.answer || ""}`, metadata: { source: "chat", user: from } }
-            ], "customer_memory");
+            await upsertDocuments(
+              [
+                {
+                  id: `q_${Date.now()}`,
+                  text: `Q: ${body}\nA: ${result.answer || ""}`,
+                  metadata: { source: "chat", user: from },
+                },
+              ],
+              "customer_memory"
+            );
           } catch { }
-
         } catch (e) {
           await sendWhatsApp(
             from,
@@ -620,24 +704,39 @@ Reply with a number or option name.`
         // Process AI request immediately
         try {
           const result = await queryRag(question);
-          await sendWhatsApp(from, result.answer || "No answer available right now.");
+          await sendWhatsApp(
+            from,
+            result.answer || "No answer available right now."
+          );
           try {
             const { upsertDocuments } = require("../utils/rag");
-            await upsertDocuments([
-              { id: `q_${Date.now()}`, text: `Q: ${question}\nA: ${result.answer || ""}`, metadata: { source: "chat", user: from } }
-            ], "customer_memory");
+            await upsertDocuments(
+              [
+                {
+                  id: `q_${Date.now()}`,
+                  text: `Q: ${question}\nA: ${result.answer || ""}`,
+                  metadata: { source: "chat", user: from },
+                },
+              ],
+              "customer_memory"
+            );
           } catch { }
         } catch (e) {
-          await sendWhatsApp(from, "⚠️ Oops! Our assistant is taking a short break. Please try again in a few moments - we’ll be right back to help you 😊");
+          await sendWhatsApp(
+            from,
+            "⚠️ Oops! Our assistant is taking a short break. Please try again in a few moments - we’ll be right back to help you 😊"
+          );
         }
         return res.end();
-
       } else {
         // User wants to stay in flow
         session.stage = session.previousStage;
         delete session.pendingQuestion;
         delete session.previousStage;
-        await sendWhatsApp(from, "Okay, continuing with your order. Please make a selection.");
+        await sendWhatsApp(
+          from,
+          "Okay, continuing with your order. Please make a selection."
+        );
         // Ideally we should re-send the options here, but for now just asking for selection is enough or user can scroll up
         return res.end();
       }
@@ -652,29 +751,44 @@ Reply with a number or option name.`
           session.previousStage = session.stage;
           session.pendingQuestion = body;
           session.stage = "confirm_exit_flow";
-          await sendWhatsApp(from, `⚠️ You are currently ordering. Do you want to cancel and ask: "${body}"?`, {
-            buttons: [
-              { id: 'yes', text: 'Yes, ask AI' },
-              { id: 'no', text: 'No, continue order' }
-            ]
-          });
+          await sendWhatsApp(
+            from,
+            `⚠️ You are currently ordering. Do you want to cancel and ask: "${body}"?`,
+            {
+              buttons: [
+                { id: "yes", text: "Yes, ask AI" },
+                { id: "no", text: "No, continue order" },
+              ],
+            }
+          );
           return res.end();
         }
-        await sendWhatsApp(from, "Invalid selection. Reply with the category number.");
+        await sendWhatsApp(
+          from,
+          "Invalid selection. Reply with the category number."
+        );
         return res.end();
       }
       const selectedTop = cats[idx - 1];
       session.selectedTop = selectedTop;
-      const [midCats] = await mysqlPool.query("SELECT `mcat_id`,`mcat_name` FROM `tbl_mid_category` WHERE `tcat_id`=? ORDER BY `mcat_name` ASC", [selectedTop.tcat_id]);
+      const [midCats] = await mysqlPool.query(
+        "SELECT `mcat_id`,`mcat_name` FROM `tbl_mid_category` WHERE `tcat_id`=? ORDER BY `mcat_name` ASC",
+        [selectedTop.tcat_id]
+      );
       if (!midCats.length) {
-        await sendWhatsApp(from, "No subcategories in this category. Reply 'menu' to go back.");
+        await sendWhatsApp(
+          from,
+          "No subcategories in this category. Reply 'menu' to go back."
+        );
         session.stage = "menu";
         return res.end();
       }
       session.midCats = midCats;
       session.stage = "shop_mid_category";
       let msg = `📂 *${selectedTop.tcat_name}*\n\nSelect a subcategory:\n\n`;
-      midCats.forEach((c, i) => { msg += `*${i + 1}️⃣ ${c.mcat_name}*\n`; });
+      midCats.forEach((c, i) => {
+        msg += `*${i + 1}️⃣ ${c.mcat_name}*\n`;
+      });
       msg += "\nReply with the number.";
       await sendWhatsApp(from, msg);
       return res.end();
@@ -688,31 +802,44 @@ Reply with a number or option name.`
           session.previousStage = session.stage;
           session.pendingQuestion = body;
           session.stage = "confirm_exit_flow";
-          await sendWhatsApp(from, `⚠️ You are currently ordering. Do you want to cancel and ask: "${body}"?`, {
-            buttons: [
-              { id: 'yes', text: 'Yes, ask AI' },
-              { id: 'no', text: 'No, continue order' }
-            ]
-          });
+          await sendWhatsApp(
+            from,
+            `⚠️ You are currently ordering. Do you want to cancel and ask: "${body}"?`,
+            {
+              buttons: [
+                { id: "yes", text: "Yes, ask AI" },
+                { id: "no", text: "No, continue order" },
+              ],
+            }
+          );
           return res.end();
         }
-        await sendWhatsApp(from, "Invalid selection. Reply with the subcategory number.");
+        await sendWhatsApp(
+          from,
+          "Invalid selection. Reply with the subcategory number."
+        );
         return res.end();
       }
       const selectedMid = cats[idx - 1];
       session.selectedMid = selectedMid;
 
       // Direct Product Fetch (Skipping End Category)
-      const [products] = await mysqlPool.query(`
+      const [products] = await mysqlPool.query(
+        `
         SELECT p.p_id, p.p_name, p.p_current_price, p.p_old_price, p.p_description, p.p_featured_photo 
         FROM tbl_product p
         JOIN tbl_end_category ec ON p.ecat_id = ec.ecat_id
         WHERE ec.mcat_id = ?
         ORDER BY p.p_name ASC
-      `, [selectedMid.mcat_id]);
+      `,
+        [selectedMid.mcat_id]
+      );
 
       if (!products.length) {
-        await sendWhatsApp(from, "No products in this category. Reply 'menu' to go back.");
+        await sendWhatsApp(
+          from,
+          "No products in this category. Reply 'menu' to go back."
+        );
         session.stage = "menu";
         return res.end();
       }
@@ -745,41 +872,63 @@ Reply with a number or option name.`
           session.previousStage = session.stage;
           session.pendingQuestion = body;
           session.stage = "confirm_exit_flow";
-          await sendWhatsApp(from, `⚠️ You are currently ordering. Do you want to cancel and ask: "${body}"?`, {
-            buttons: [
-              { id: 'yes', text: 'Yes, ask AI' },
-              { id: 'no', text: 'No, continue order' }
-            ]
-          });
+          await sendWhatsApp(
+            from,
+            `⚠️ You are currently ordering. Do you want to cancel and ask: "${body}"?`,
+            {
+              buttons: [
+                { id: "yes", text: "Yes, ask AI" },
+                { id: "no", text: "No, continue order" },
+              ],
+            }
+          );
           return res.end();
         }
-        await sendWhatsApp(from, "Invalid selection. Reply with the product number, or 'menu' to go back.");
+        await sendWhatsApp(
+          from,
+          "Invalid selection. Reply with the product number, or 'menu' to go back."
+        );
         return res.end();
       }
       const product = products[idx - 1];
       session.selectedProduct = product;
 
       // Fetch extra details (sizes, colors)
-      const [sizes] = await mysqlPool.query("SELECT s.size_name FROM tbl_size s JOIN tbl_product_size ps ON s.size_id=ps.size_id WHERE ps.p_id=?", [product.p_id]);
-      const [colors] = await mysqlPool.query("SELECT c.color_name FROM tbl_color c JOIN tbl_product_color pc ON c.color_id=pc.color_id WHERE pc.p_id=?", [product.p_id]);
+      const [sizes] = await mysqlPool.query(
+        "SELECT s.size_name FROM tbl_size s JOIN tbl_product_size ps ON s.size_id=ps.size_id WHERE ps.p_id=?",
+        [product.p_id]
+      );
+      const [colors] = await mysqlPool.query(
+        "SELECT c.color_name FROM tbl_color c JOIN tbl_product_color pc ON c.color_id=pc.color_id WHERE pc.p_id=?",
+        [product.p_id]
+      );
 
-      product.sizes = sizes.map(s => s.size_name).join(", ");
-      product.colors = colors.map(c => c.color_name).join(", ");
+      product.sizes = sizes.map((s) => s.size_name).join(", ");
+      product.colors = colors.map((c) => c.color_name).join(", ");
 
       session.stage = "shop_quantity";
 
-      const oldPriceDisplay = product.p_old_price > product.p_current_price ? `\n❌ Old Price: ~₹${product.p_old_price}~` : "";
+      const oldPriceDisplay =
+        product.p_old_price > product.p_current_price
+          ? `\n❌ Old Price: ~₹${product.p_old_price}~`
+          : "";
       const sizeDisplay = product.sizes ? `\n📏 Size: ${product.sizes}` : "";
-      const colorDisplay = product.colors ? `\n🎨 Color: ${product.colors}` : "";
+      const colorDisplay = product.colors
+        ? `\n🎨 Color: ${product.colors}`
+        : "";
 
       const cleanDesc = stripHtml(product.p_description);
-      const descDisplay = cleanDesc ? `\n📝 Description: ${cleanDesc.substring(0, 150)}${cleanDesc.length > 150 ? "..." : ""}` : "";
+      const descDisplay = cleanDesc
+        ? `\n📝 Description: ${cleanDesc.substring(0, 150)}${cleanDesc.length > 150 ? "..." : ""
+        }`
+        : "";
 
       const imageUrl = product.p_featured_photo
         ? `https://www.sachetanpackaging.in/assets/uploads/${product.p_featured_photo}`
         : null;
 
-      await sendWhatsApp(from,
+      await sendWhatsApp(
+        from,
         `📦 *${product.p_name}*
 ──────────────────
 💰 *Price: ₹${product.p_current_price}*${oldPriceDisplay}${sizeDisplay}${colorDisplay}${descDisplay}
@@ -798,15 +947,22 @@ _Reply 'menu' to go back._`,
           session.previousStage = session.stage;
           session.pendingQuestion = body;
           session.stage = "confirm_exit_flow";
-          await sendWhatsApp(from, `⚠️ You are currently ordering. Do you want to cancel and ask: "${body}"?`, {
-            buttons: [
-              { id: 'yes', text: 'Yes, ask AI' },
-              { id: 'no', text: 'No, continue order' }
-            ]
-          });
+          await sendWhatsApp(
+            from,
+            `⚠️ You are currently ordering. Do you want to cancel and ask: "${body}"?`,
+            {
+              buttons: [
+                { id: "yes", text: "Yes, ask AI" },
+                { id: "no", text: "No, continue order" },
+              ],
+            }
+          );
           return res.end();
         }
-        await sendWhatsApp(from, "Invalid quantity. Please enter a positive number.");
+        await sendWhatsApp(
+          from,
+          "Invalid quantity. Please enter a positive number."
+        );
         return res.end();
       }
       const product = session.selectedProduct;
@@ -820,7 +976,7 @@ _Reply 'menu' to go back._`,
         quantity: qty,
         total,
         oldPrice: product.p_old_price,
-        size: product.sizes,   // String like "Small, Medium"
+        size: product.sizes, // String like "Small, Medium"
         color: product.colors, // String like "Red, Blue"
         // dimensions/weight if available in product object
       };
@@ -839,9 +995,10 @@ _Reply 'menu' to go back._`,
     if (session.stage === "ask_name") {
       if (isConversational(body)) {
         // Handle interruption if needed, but for name, almost anything is valid.
-        // However, if they type "menu" or "cancel", it's handled by generic logic if we had it, 
+        // However, if they type "menu" or "cancel", it's handled by generic logic if we had it,
         // but here we check specifically.
-        if (body.toLowerCase() === "menu" ||
+        if (
+          body.toLowerCase() === "menu" ||
           body.toLowerCase() === "cancel" ||
           body.toLowerCase() === "exit" ||
           body.toLowerCase() === "stop" ||
@@ -869,9 +1026,13 @@ _Reply 'menu' to go back._`,
           body.toLowerCase() === "good morning" ||
           body.toLowerCase() === "good evening" ||
           body.toLowerCase() === "good night" ||
-          body.toLowerCase() === "Thank you for confirming my booking.") {
+          body.toLowerCase() === "Thank you for confirming my booking."
+        ) {
           session.stage = "menu";
-          await sendWhatsApp(from, "Order cancelled. Reply 'menu' to see options.");
+          await sendWhatsApp(
+            from,
+            "Order cancelled. Reply 'menu' to see options."
+          );
           return res.end();
         }
       }
@@ -904,8 +1065,8 @@ _Reply 'menu' to go back._`,
   Qty: ${item.quantity}
   Price: ₹${item.price}
   Total: ₹${item.total}
-  ${item.size ? `Size: ${item.size}` : ''}
-  ${item.color ? `Color: ${item.color}` : ''}
+  ${item.size ? `Size: ${item.size}` : ""}
+  ${item.color ? `Color: ${item.color}` : ""}
 
 *Customer Details:*
 👤 Name: ${draft.customerName}
@@ -915,22 +1076,22 @@ _Reply 'menu' to go back._`,
 *Grand Total: ₹${draft.totalAmount}*`,
         {
           buttons: [
-            { id: 'confirm', text: 'Confirm Order' },
-            { id: 'menu', text: 'Cancel Order' }
+            { id: "confirm", text: "Confirm Order" },
+            { id: "menu", text: "Cancel Order" },
           ],
           contentSid: process.env.TWILIO_CONTENT_SID_CONFIRM,
           contentVariables: {
-            "1": item.name,
-            "2": String(item.quantity),
-            "3": String(item.price),
-            "4": String(item.total),
-            "5": item.size ? `Size: ${item.size}` : "",
-            "6": item.color ? `Color: ${item.color}` : "",
-            "7": draft.customerName,
-            "8": draft.address,
-            "9": draft.pincode,
-            "10": String(draft.totalAmount)
-          }
+            1: item.name,
+            2: String(item.quantity),
+            3: String(item.price),
+            4: String(item.total),
+            5: item.size ? `Size: ${item.size}` : "",
+            6: item.color ? `Color: ${item.color}` : "",
+            7: draft.customerName,
+            8: draft.address,
+            9: draft.pincode,
+            10: String(draft.totalAmount),
+          },
         }
       );
       return res.end();
@@ -939,7 +1100,9 @@ _Reply 'menu' to go back._`,
     if (session.stage === "shop_confirm") {
       if (body === "1" || body === "confirm" || body.includes("confirm")) {
         const draft = session.orderDraft;
-        const orderId = `ORD-${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 1000)}`;
+        const orderId = `ORD-${Date.now().toString().slice(-6)}-${Math.floor(
+          Math.random() * 1000
+        )}`;
         const order = new Order({
           orderId,
           whatsapp: from,
@@ -952,8 +1115,11 @@ _Reply 'menu' to go back._`,
           expiresAt: new Date(Date.now() + 5 * 60 * 1000), // 5 minutes
         });
         await order.save();
-        const payUrl = `${process.env.BASE_URL || "http://localhost:4000"}/payment/product?order=${order._id}`;
-        await sendWhatsApp(from, `💳 *Payment Link Generated*
+        const payUrl = `${process.env.BASE_URL || "http://localhost:4000"
+          }/payment/product?order=${order._id}`;
+        await sendWhatsApp(
+          from,
+          `💳 *Payment Link Generated*
 Order ID: ${orderId}
 Amount: ₹${draft.totalAmount}
 
@@ -961,34 +1127,42 @@ Click to pay:
 ${payUrl}
 
 _Link expires in 5 minutes._
-Reply 'menu' to return.`, {
-          buttons: [
-            { id: 'menu', text: 'Main Menu' }
-          ],
-          // Use 'used contentsid main menu button' (assuming placeholder or same SID if applicable, but usually distinct)
-          // Since no explicit SID provided for Payment Link, we use a placeholder or reuse if appropriate.
-          // Based on user input "used contentsid main menu button", we'll assume they want to use a specific SID they provided before 
-          // or they mean the "Main Menu" SID is NOT for this. 
-          // Actually, "used contentsid main menu button" likely refers to the Main Menu SID 'HX7d5236227e75996966c466fb55ef1434' 
-          // but that template probably doesn't have 4 variables and a CTA.
-          // We will use a placeholder process.env.TWILIO_CONTENT_SID_PAYMENT
-          contentSid: process.env.TWILIO_CONTENT_SID_PAYMENT,
-          contentVariables: {
-            "1": orderId,
-            "2": String(draft.totalAmount),
-            "3": "5", // Expiration minutes
-            "4": order._id.toString() // Dynamic part of the URL
+Reply 'menu' to return.`,
+          {
+            buttons: [{ id: "menu", text: "Main Menu" }],
+            // Use 'used contentsid main menu button' (assuming placeholder or same SID if applicable, but usually distinct)
+            // Since no explicit SID provided for Payment Link, we use a placeholder or reuse if appropriate.
+            // Based on user input "used contentsid main menu button", we'll assume they want to use a specific SID they provided before
+            // or they mean the "Main Menu" SID is NOT for this.
+            // Actually, "used contentsid main menu button" likely refers to the Main Menu SID 'HX7d5236227e75996966c466fb55ef1434'
+            // but that template probably doesn't have 4 variables and a CTA.
+            // We will use a placeholder process.env.TWILIO_CONTENT_SID_PAYMENT
+            contentSid: process.env.TWILIO_CONTENT_SID_PAYMENT,
+            contentVariables: {
+              1: orderId,
+              2: String(draft.totalAmount),
+              3: "5", // Expiration minutes
+              4: order._id.toString(), // Dynamic part of the URL
+            },
           }
-        });
+        );
         session.stage = "menu";
         try {
           const { upsertDocuments } = require("../utils/rag");
-          await upsertDocuments([
-            { id: `order_${order._id}`, text: `Order created: ${JSON.stringify(order.toObject())}`, metadata: { source: "order", user: from } }
-          ], "customer_memory");
+          await upsertDocuments(
+            [
+              {
+                id: `order_${order._id}`,
+                text: `Order created: ${JSON.stringify(order.toObject())}`,
+                metadata: { source: "order", user: from },
+              },
+            ],
+            "customer_memory"
+          );
         } catch { }
         return res.end();
-      } else if (body === "menu" ||
+      } else if (
+        body === "menu" ||
         body === "cancel" ||
         body === "exit" ||
         body === "stop" ||
@@ -1015,35 +1189,30 @@ Reply 'menu' to return.`, {
         body === "yo" ||
         body === "good morning" ||
         body === "good evening" ||
-        body === "good night") {
+        body === "good night"
+      ) {
         session.stage = "menu";
-        await sendWhatsApp(from, "Order cancelled. Reply 'menu' to see options.");
+        await sendWhatsApp(
+          from,
+          "Order cancelled. Reply 'menu' to see options."
+        );
         return res.end();
       } else {
-        await sendWhatsApp(from, "Reply 'confirm' to proceed or 'menu' to cancel.");
+        await sendWhatsApp(
+          from,
+          "Reply 'confirm' to proceed or 'menu' to cancel."
+        );
         return res.end();
       }
     }
 
-    if (session.stage === "order_status") {
-      const id = body;
-      try {
-        const order = await Order.findById(id);
-        if (!order) {
-          await sendWhatsApp(from, "Order not found. Ensure you provided the correct Order ID.");
-        } else {
-          await sendWhatsApp(from, `📦 *Order Status*\n\nID: ${order._id}\nStatus: ${order.status}\nTotal: ₹${order.totalAmount}\n\nReply 'menu' to return.`);
-        }
-      } catch (e) {
-        await sendWhatsApp(from, "Invalid Order ID format. Reply with the correct ID or 'menu' to go back.");
-      }
-      session.stage = "menu";
-      return res.end();
-    }
 
     if (session.stage === "ai_assistant") {
       const question = (req.body.Body || "").trim();
-      session.sales = session.sales || { askedNameCity: false, leadLogged: false };
+      session.sales = session.sales || {
+        askedNameCity: false,
+        leadLogged: false,
+      };
       function extractSpecs(t) {
         const s = t.toLowerCase();
         let product = "";
@@ -1052,18 +1221,24 @@ Reply 'menu' to return.`, {
         else if (/paper bag|bag/.test(s)) product = "Paper Bag";
         else if (/base|cake base|board/.test(s)) product = "Base";
         else if (/laminated box/.test(s)) product = "Laminated Box";
-        const sizeMatch = s.match(/(\d+)\s*kg/) || s.match(/size\s*[:\-]\s*([^\n]+)/);
-        const size = sizeMatch ? (sizeMatch[1] || sizeMatch[0]) : "";
-        const qtyMatch = s.match(/(\d{2,})\s*(qty|pcs|pieces|quantity)/) || s.match(/quantity\s*[:\-]\s*(\d{2,})/);
-        const quantity = qtyMatch ? (qtyMatch[1] || "") : "";
+        const sizeMatch =
+          s.match(/(\d+)\s*kg/) || s.match(/size\s*[:\-]\s*([^\n]+)/);
+        const size = sizeMatch ? sizeMatch[1] || sizeMatch[0] : "";
+        const qtyMatch =
+          s.match(/(\d{2,})\s*(qty|pcs|pieces|quantity)/) ||
+          s.match(/quantity\s*[:\-]\s*(\d{2,})/);
+        const quantity = qtyMatch ? qtyMatch[1] || "" : "";
         const gsmMatch = s.match(/(\d{2,4})\s*gsm/);
         const paper = gsmMatch ? `${gsmMatch[1]} GSM` : "";
-        const printing = /print|printed|logo|branding|custom/.test(s) ? "Yes" : "";
+        const printing = /print|printed|logo|branding|custom/.test(s)
+          ? "Yes"
+          : "";
         return { product, size, paper, quantity, printing };
       }
       function extractNameCity(t, askedHint) {
         const s = (t || "").trim().replace(/\s+/g, " ");
-        let name = null, city = null;
+        let name = null,
+          city = null;
         let m;
         m = s.match(/name\s*[:\-]\s*([a-zA-Z ]{2,})/i);
         if (m) name = m[1].trim();
@@ -1076,11 +1251,19 @@ Reply 'menu' to return.`, {
         m = s.match(/\bfrom\s+([a-zA-Z ]{2,})/i);
         if (!city && m) city = m[1].trim();
         if (askedHint) {
-          const segments = s.split(/[,\|]+/).map(x => x.trim()).filter(Boolean);
+          const segments = s
+            .split(/[,\|]+/)
+            .map((x) => x.trim())
+            .filter(Boolean);
           if (!name && !city && segments.length >= 2) {
-            const lastSeg = segments[segments.length - 1].replace(/\bcity\b:?/i, "").trim();
+            const lastSeg = segments[segments.length - 1]
+              .replace(/\bcity\b:?/i, "")
+              .trim();
             const nameSeg = segments.slice(0, -1).join(" ").trim();
-            if (/^[a-zA-Z ]{2,}$/.test(nameSeg) && /^[a-zA-Z ]{2,}$/.test(lastSeg)) {
+            if (
+              /^[a-zA-Z ]{2,}$/.test(nameSeg) &&
+              /^[a-zA-Z ]{2,}$/.test(lastSeg)
+            ) {
               name = nameSeg;
               city = lastSeg;
             }
@@ -1089,8 +1272,13 @@ Reply 'menu' to return.`, {
             const tokens = s.split(/\s+/).filter(Boolean);
             if (!name && !city && tokens.length >= 2) {
               const cityCandidate = tokens[tokens.length - 1];
-              const nameCandidate = tokens.slice(0, tokens.length - 1).join(" ");
-              if (/^[a-zA-Z ]{2,}$/.test(nameCandidate) && /^[a-zA-Z ]{2,}$/.test(cityCandidate)) {
+              const nameCandidate = tokens
+                .slice(0, tokens.length - 1)
+                .join(" ");
+              if (
+                /^[a-zA-Z ]{2,}$/.test(nameCandidate) &&
+                /^[a-zA-Z ]{2,}$/.test(cityCandidate)
+              ) {
                 name = nameCandidate;
                 city = cityCandidate;
               }
@@ -1104,7 +1292,34 @@ Reply 'menu' to return.`, {
       if (nc.city) session.sales.city = nc.city;
 
       // Exit command
-      if (question.toLowerCase() === "main menu" || question.toLowerCase() === "exit" || question.toLowerCase() === "menu" || question.toLowerCase() === "back" || question.toLowerCase() === "home" || question.toLowerCase() === "exit" || question.toLowerCase() === "end" || question.toLowerCase() === "stop" || question.toLowerCase() === "reset" || question.toLowerCase() === "thanks" || question.toLowerCase() === "thank you" || question.toLowerCase() === "thankyou" || question.toLowerCase() === "thx" || question.toLowerCase() === "ty" || question.toLowerCase() === "thank u" || question.toLowerCase() === "ok" || question.toLowerCase() === "okay" || question.toLowerCase() === "cool" || question.toLowerCase() === "done" || question.toLowerCase() === "confirmed" || question.toLowerCase() === "yes" || question.toLowerCase() === "yep" || question.toLowerCase() === "yo" || question.toLowerCase() === "good morning" || question.toLowerCase() === "good evening" || question.toLowerCase() === "good night") {
+      if (
+        question.toLowerCase() === "main menu" ||
+        question.toLowerCase() === "exit" ||
+        question.toLowerCase() === "menu" ||
+        question.toLowerCase() === "back" ||
+        question.toLowerCase() === "home" ||
+        question.toLowerCase() === "exit" ||
+        question.toLowerCase() === "end" ||
+        question.toLowerCase() === "stop" ||
+        question.toLowerCase() === "reset" ||
+        question.toLowerCase() === "thanks" ||
+        question.toLowerCase() === "thank you" ||
+        question.toLowerCase() === "thankyou" ||
+        question.toLowerCase() === "thx" ||
+        question.toLowerCase() === "ty" ||
+        question.toLowerCase() === "thank u" ||
+        question.toLowerCase() === "ok" ||
+        question.toLowerCase() === "okay" ||
+        question.toLowerCase() === "cool" ||
+        question.toLowerCase() === "done" ||
+        question.toLowerCase() === "confirmed" ||
+        question.toLowerCase() === "yes" ||
+        question.toLowerCase() === "yep" ||
+        question.toLowerCase() === "yo" ||
+        question.toLowerCase() === "good morning" ||
+        question.toLowerCase() === "good evening" ||
+        question.toLowerCase() === "good night"
+      ) {
         session.stage = "menu";
         await sendWhatsApp(
           from,
@@ -1132,7 +1347,10 @@ Reply with a number.`
           message: question,
           reply,
         });
-        const isLeadIntent = /quote|quotation|order|buy|price|bulk|custom|printed|logo|branding/i.test(question);
+        const isLeadIntent =
+          /quote|quotation|order|buy|price|bulk|custom|printed|logo|branding/i.test(
+            question
+          );
         const specs = extractSpecs(question);
         if (isLeadIntent) {
           await logLead({
@@ -1147,7 +1365,11 @@ Reply with a number.`
             notes: question,
             converted: true,
           });
-        } else if ((session.sales.name && session.sales.city) && !session.sales.leadLogged) {
+        } else if (
+          session.sales.name &&
+          session.sales.city &&
+          !session.sales.leadLogged
+        ) {
           await logLead({
             phone: from,
             name: session.sales.name,
@@ -1162,26 +1384,48 @@ Reply with a number.`
           });
           session.sales.leadLogged = true;
         }
-        if (!session.sales.askedNameCity && (!session.sales.name || !session.sales.city)) {
+        if (
+          !session.sales.askedNameCity &&
+          (!session.sales.name || !session.sales.city)
+        ) {
           session.sales.askedNameCity = true;
-          await sendWhatsApp(from, "May I know your name and city? For example: Rahul Pune or name: Rahul, city: Pune");
+          await sendWhatsApp(
+            from,
+            "May I know your name and city? For example: Rahul Pune or name: Rahul, city: Pune"
+          );
         } else if (session.sales.askedNameCity) {
           if (session.sales.name && !session.sales.city) {
-            await sendWhatsApp(from, `Thanks, ${session.sales.name}! May I know your city?`);
+            await sendWhatsApp(
+              from,
+              `Thanks, ${session.sales.name}! May I know your city?`
+            );
           } else if (!session.sales.name && session.sales.city) {
             await sendWhatsApp(from, `Thanks! May I know your name?`);
           } else if (!session.sales.name && !session.sales.city) {
-            await sendWhatsApp(from, "May I know your name and city? For example: Rahul Pune or name: Rahul, city: Pune");
+            await sendWhatsApp(
+              from,
+              "May I know your name and city? For example: Rahul Pune or name: Rahul, city: Pune"
+            );
           }
         }
         try {
           const { upsertDocuments } = require("../utils/rag");
-          await upsertDocuments([
-            { id: `q_${Date.now()}`, text: `Q: ${question}\nA: ${result.answer || ""}`, metadata: { source: "chat", user: from } }
-          ], "customer_memory");
+          await upsertDocuments(
+            [
+              {
+                id: `q_${Date.now()}`,
+                text: `Q: ${question}\nA: ${result.answer || ""}`,
+                metadata: { source: "chat", user: from },
+              },
+            ],
+            "customer_memory"
+          );
         } catch { }
       } catch (e) {
-        await sendWhatsApp(from, "⚠️ Oops! Our assistant is taking a short break. Please try again in a few moments - we’ll be right back to help you 😊");
+        await sendWhatsApp(
+          from,
+          "⚠️ Oops! Our assistant is taking a short break. Please try again in a few moments - we’ll be right back to help you 😊"
+        );
       }
       // Stay in ai_assistant stage
       return res.end();
@@ -1208,10 +1452,12 @@ Reply with a number.`
       const courts = await Court.find();
 
       // In the check_availability_date stage
-      let availabilityMsg = `💸 Available time slots for ${availableDates[idx - 1].display}:\n\n`;
+      let availabilityMsg = `💸 Available time slots for ${availableDates[idx - 1].display
+        }:\n\n`;
 
       if (!slots.length || !courts.length) {
-        availabilityMsg = "No time slots or courts configured. Please try another date or contact admin.";
+        availabilityMsg =
+          "No time slots or courts configured. Please try another date or contact admin.";
       } else {
         let hasAvailableSlots = false;
         let slotMessages = [];
@@ -1245,7 +1491,8 @@ Reply with a number.`
         }
 
         if (!hasAvailableSlots) {
-          availabilityMsg = "No available time slots for this date. Please select another date.";
+          availabilityMsg =
+            "No available time slots for this date. Please select another date.";
         } else {
           // Send availability in chunks to avoid exceeding character limit
           let currentChunk = availabilityMsg;
@@ -1259,7 +1506,9 @@ Reply with a number.`
             }
           }
 
-          availabilityMsg = currentChunk + "\nReply with 'book' to make a booking or 'menu' to return to main menu.";
+          availabilityMsg =
+            currentChunk +
+            "\nReply with 'book' to make a booking or 'menu' to return to main menu.";
         }
       }
 
@@ -1282,7 +1531,10 @@ Reply with a number.`
         session.availableDates = availableDates;
         await sendWhatsApp(from, dateOptions);
         return res.end();
-      } else if (body === "menu" || body.includes("menu") || body.includes("main menu") ||
+      } else if (
+        body === "menu" ||
+        body.includes("menu") ||
+        body.includes("main menu") ||
         body === "hi" ||
         body === "hello" ||
         body === "hey" ||
@@ -1498,7 +1750,8 @@ Please reply with:
 
         await sendWhatsApp(from, playerOptions);
         return res.end();
-      } else if (body === "hi" ||
+      } else if (
+        body === "hi" ||
         body === "hello" ||
         body === "hey" ||
         body === "hii" ||
@@ -1614,8 +1867,12 @@ Reply with the number or option name.`
 
       let msg = `🎾 Available courts for ${session.draft.dateDisplay} – ${session.draft.slot} (${session.draft.playerCount} players):\n\n`;
       availableCourts.forEach((c, i) => {
-        const courtAmount = calculateAmount(session.draft.duration, session.draft.playerCount);
-        msg += `*${i + 1}. ${c.name}* - ₹${courtAmount} (${session.draft.duration})\n`;
+        const courtAmount = calculateAmount(
+          session.draft.duration,
+          session.draft.playerCount
+        );
+        msg += `*${i + 1}. ${c.name}* - ₹${courtAmount} (${session.draft.duration
+          })\n`;
       });
       msg += "\nReply with the court number.";
       msg += "\nReply 'back' to choose different time slot.";

@@ -10,8 +10,27 @@ const { upsertDocuments, deleteDocument } = require("../utils/rag");
 const auth = require("../middleware/auth");
 
 // Configure Multer for file uploads
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const uploadPath = path.join(__dirname, "../public/uploads");
+    if (!fs.existsSync(uploadPath)) {
+      fs.mkdirSync(uploadPath, { recursive: true });
+    }
+    cb(null, uploadPath);
+  },
+  filename: function (req, file, cb) {
+    // Sanitize filename: remove special chars, keep extension
+    const ext = path.extname(file.originalname).toLowerCase();
+    const name = path.basename(file.originalname, ext)
+      .replace(/[^a-z0-9]/gi, '_')
+      .toLowerCase();
+    const timestamp = Date.now();
+    cb(null, `${name}_${timestamp}${ext}`);
+  }
+});
+
 const upload = multer({
-  dest: "uploads/",
+  storage: storage,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
 });
 
@@ -24,12 +43,16 @@ async function ensureTable() {
         \`doc_id\` VARCHAR(255) NOT NULL UNIQUE,
         \`title\` VARCHAR(255) NOT NULL,
         \`content\` TEXT NOT NULL,
-        \`source_type\` ENUM('manual', 'file') DEFAULT 'manual',
+        \`source_type\` VARCHAR(50) DEFAULT 'manual',
         \`source_name\` VARCHAR(255) DEFAULT NULL,
         \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
+    
+    // Migration: Ensure source_type is VARCHAR (in case it was ENUM)
+    await pool.query("ALTER TABLE tbl_ai_knowledge MODIFY COLUMN source_type VARCHAR(50) DEFAULT 'manual'");
+    
   } catch (err) {
     console.error("Auto-migration failed:", err.message);
   }
@@ -48,7 +71,8 @@ router.get("/documents", auth, async (req, res) => {
 
 // 2. ADD MANUAL TEXT
 router.post("/manual", auth, async (req, res) => {
-  const { title, content } = req.body;
+  let { title, content } = req.body;
+  let updatedContent = content;
   if (!title || !content) return res.status(400).json({ error: "Title and content are required." });
 
   const docId = `doc_${Date.now()}`;
@@ -140,19 +164,51 @@ router.post("/upload", auth, upload.single("file"), async (req, res) => {
 // 4. UPDATE DOCUMENT
 router.put("/documents/:id", auth, async (req, res) => {
   const { id } = req.params;
-  const { title, content } = req.body;
+  let { title, content } = req.body;
+  let updatedContent = content;
   
   try {
-    // Get doc_id first
-    const [rows] = await pool.query("SELECT doc_id FROM tbl_ai_knowledge WHERE id = ?", [id]);
+    // Get doc info first
+    const [rows] = await pool.query("SELECT doc_id, source_type, source_name FROM tbl_ai_knowledge WHERE id = ?", [id]);
     if (!rows.length) return res.status(404).json({ error: "Document not found." });
-    const docId = rows[0].doc_id;
+    const { doc_id, source_type, source_name } = rows[0];
+
+    // Prepare Metadata
+    let metadata = { title, source: "updated_manual" };
+
+    // Preserve Product Metadata if applicable
+    if (source_type === 'product') {
+        const priceMatch = updatedContent.match(/Price:\s*(.+)/i);
+        const price = priceMatch ? priceMatch[1].trim() : "";
+        const imageMatch = updatedContent.match(/Image Available:\s*(https?:\/\/[^\s]+)/i);
+        let newImageUrl = source_name;
+        if (imageMatch) {
+            const filename = imageMatch[1].trim().split("/").pop();
+            newImageUrl = `${process.env.BASE_URL}/uploads/${filename}`;
+        }
+        if (newImageUrl !== source_name) {
+            await pool.query("UPDATE tbl_ai_knowledge SET source_name = ? WHERE id = ?", [newImageUrl, id]);
+        }
+        if (updatedContent.includes("Image Available:")) {
+            updatedContent = updatedContent.replace(/Image Available:\s*https?:\/\/[^\s]+/i, `Image Available: ${newImageUrl}`);
+            updatedContent = updatedContent.replace(/Image Available:\s*\n\s*https?:\/\/[^\s]+/i, `Image Available: ${newImageUrl}`);
+        } else {
+            updatedContent += `\nImage Available: ${newImageUrl}`;
+        }
+        metadata = {
+            title,
+            source: "admin_product_updated",
+            type: "product",
+            imageUrl: newImageUrl,
+            price: price
+        };
+    }
 
     // Update MySQL
-    await pool.query("UPDATE tbl_ai_knowledge SET title = ?, content = ? WHERE id = ?", [title, content, id]);
+    await pool.query("UPDATE tbl_ai_knowledge SET title = ?, content = ? WHERE id = ?", [title, updatedContent, id]);
 
     // Update Pinecone (Upsert overwrites)
-    await upsertDocuments([{ id: docId, text: content, metadata: { title, source: "updated_manual" } }]);
+    await upsertDocuments([{ id: doc_id, text: updatedContent, metadata }]);
 
     res.json({ success: true, message: "Document updated successfully." });
   } catch (err) {
@@ -180,6 +236,51 @@ router.delete("/documents/:id", auth, async (req, res) => {
     await pool.query("DELETE FROM tbl_ai_knowledge WHERE id = ?", [id]);
 
     res.json({ success: true, message: "Document deleted successfully." });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 6. ADD PRODUCT (Image + Text)
+router.post("/product", auth, upload.single("image"), async (req, res) => {
+  const { name, description, price, category } = req.body;
+  if (!req.file) return res.status(400).json({ error: "Product image is required." });
+
+  // Use the new support domain
+  const imageUrl = `${process.env.BASE_URL}/uploads/${req.file.filename}`;
+  const text = `Product: ${name}\nCategory: ${category}\nPrice: ${price}\nDescription: ${description}\nImage Available: ${imageUrl}`;
+  
+  const docId = `prod_${Date.now()}`;
+
+  try {
+    // 1. Add to MySQL (using tbl_ai_knowledge for now, or could use tbl_product if mapped)
+    // We use source_type='product' to distinguish
+    await pool.query(
+      "INSERT INTO tbl_ai_knowledge (doc_id, title, content, source_type, source_name) VALUES (?, ?, ?, 'product', ?)",
+      [docId, name, text, imageUrl]
+    );
+
+    // 2. Add to Pinecone
+    try {
+      await upsertDocuments([{ 
+          id: docId, 
+          text: text, 
+          metadata: { 
+              title: name, 
+              source: "admin_product", 
+              type: "product",
+              imageUrl: imageUrl,
+              price: price
+          } 
+      }]);
+    } catch (pineconeError) {
+      console.error("Pinecone upsert failed:", pineconeError);
+      // Rollback
+      await pool.query("DELETE FROM tbl_ai_knowledge WHERE doc_id = ?", [docId]);
+      throw new Error("Failed to sync product with AI.");
+    }
+
+    res.json({ success: true, message: "Product added and AI trained successfully." });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

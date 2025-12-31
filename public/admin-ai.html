@@ -70,6 +70,10 @@
           <span class="text-xl mr-3 group-hover:scale-110 transition">📤</span>
           <span class="font-semibold">Upload Data</span>
         </a>
+        <a href="#" onclick="showTab('product')" id="nav-product" class="nav-item flex items-center px-8 py-4 text-slate-600 hover:bg-slate-50 transition group">
+          <span class="text-xl mr-3 group-hover:scale-110 transition">🛍️</span>
+          <span class="font-semibold">Add Product</span>
+        </a>
         <!-- <a href="#" onclick="showTab('manual')" id="nav-manual" class="nav-item flex items-center px-8 py-4 text-slate-600 hover:bg-slate-50 transition group">
           <span class="text-xl mr-3 group-hover:scale-110 transition">✍️</span>
           <span class="font-semibold">Add Manual</span>
@@ -123,6 +127,50 @@
             <button type="submit" class="w-full bg-blue-600 text-white py-4 rounded-xl hover:bg-blue-700 transition font-bold shadow-lg shadow-blue-200 flex justify-center items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed">
               <span id="upload-text">Start Training</span>
               <div id="upload-loader" class="loader hidden"></div>
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Product Tab -->
+      <div id="tab-product" class="tab-content hidden max-w-4xl mx-auto">
+        <div class="mb-8">
+          <h2 class="text-3xl font-bold text-slate-900">Add New Product</h2>
+          <p class="text-slate-500 mt-2">Add product details and image for AI training.</p>
+        </div>
+        <div class="bg-white p-8 md:p-10 rounded-2xl shadow-sm border border-slate-200">
+          <form id="product-form" class="space-y-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <label class="block text-sm font-semibold text-slate-700 mb-2">Product Name</label>
+                <input type="text" name="name" class="w-full px-5 py-4 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 transition bg-slate-50 focus:bg-white" placeholder="e.g. Printed Cake Box" required />
+              </div>
+              <div>
+                <label class="block text-sm font-semibold text-slate-700 mb-2">Category</label>
+                <select name="category" class="w-full px-5 py-4 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 transition bg-slate-50 focus:bg-white">
+                   <option value="Box">Box</option>
+                   <option value="Bag">Bag</option>
+                   <option value="Pouch">Pouch</option>
+                   <option value="Label">Label</option>
+                   <option value="Other">Other</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label class="block text-sm font-semibold text-slate-700 mb-2">Price Info</label>
+              <input type="text" name="price" class="w-full px-5 py-4 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 transition bg-slate-50 focus:bg-white" placeholder="e.g. Starting from ₹5/pc" required />
+            </div>
+            <div>
+              <label class="block text-sm font-semibold text-slate-700 mb-2">Description</label>
+              <textarea name="description" rows="4" class="w-full px-5 py-4 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 transition bg-slate-50 focus:bg-white" placeholder="Product features, sizes, material..." required></textarea>
+            </div>
+            <div>
+              <label class="block text-sm font-semibold text-slate-700 mb-2">Product Image</label>
+              <input type="file" name="image" accept="image/*" class="w-full px-5 py-4 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 transition bg-slate-50 focus:bg-white" required />
+            </div>
+            <button type="submit" class="w-full bg-purple-600 text-white py-4 rounded-xl hover:bg-purple-700 transition font-bold shadow-lg shadow-purple-200 flex justify-center items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed">
+              <span id="product-text">Add Product & Train AI</span>
+              <div id="product-loader" class="loader hidden"></div>
             </button>
           </form>
         </div>
@@ -284,7 +332,10 @@
         loaderEl.classList.remove("hidden");
         btn.disabled = true;
       } else {
-        textEl.textContent = formId === "upload-form" ? "Start Training" : "Save to Knowledge Base";
+        if (formId === "upload-form") textEl.textContent = "Start Training";
+        else if (formId === "product-form") textEl.textContent = "Add Product & Train AI";
+        else textEl.textContent = "Save to Knowledge Base";
+        
         loaderEl.classList.add("hidden");
         btn.disabled = false;
       }
@@ -325,6 +376,32 @@
         Swal.fire("Error", "Network error", "error");
       }
       setLoading("upload-form", false);
+    });
+
+    // --- PRODUCT ---
+    document.getElementById("product-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const form = e.target;
+      const formData = new FormData(form);
+
+      setLoading("product-form", true);
+      try {
+        const res = await fetch(`${API_BASE}/product`, {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${localStorage.getItem("admin_token")}` },
+          body: formData
+        });
+        const data = await res.json();
+        if (res.ok) {
+          Swal.fire("Success", "Product added and AI trained!", "success");
+          form.reset();
+        } else {
+          Swal.fire("Error", data.error || "Failed to add product", "error");
+        }
+      } catch (err) {
+        Swal.fire("Error", "Network error", "error");
+      }
+      setLoading("product-form", false);
     });
 
     // --- MANUAL ---
@@ -425,6 +502,11 @@
       const id = document.getElementById("edit-id").value;
       const title = document.getElementById("edit-title").value;
       const content = document.getElementById("edit-content").value;
+      
+      const btn = document.querySelector("#edit-modal button[onclick='saveEdit()']");
+      const originalText = btn.innerHTML;
+      btn.innerHTML = '<div class="loader"></div>';
+      btn.disabled = true;
 
       try {
         const res = await fetch(`${API_BASE}/documents/${id}`, {
@@ -444,6 +526,9 @@
         }
       } catch (err) {
         Swal.fire("Error", "Network error", "error");
+      } finally {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
       }
     }
 
@@ -459,6 +544,18 @@
       });
 
       if (result.isConfirmed) {
+        // Disable button in Swal if possible, but Swal handles async.
+        // We can show a loading state using Swal.showLoading()
+        Swal.fire({
+            title: 'Deleting...',
+            text: 'Please wait',
+            allowOutsideClick: false,
+            showConfirmButton: false,
+            didOpen: () => {
+                Swal.showLoading();
+            }
+        });
+
         try {
           const res = await fetch(`${API_BASE}/documents/${id}`, {
             method: "DELETE",

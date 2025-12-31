@@ -111,6 +111,36 @@ Please arrive 10 minutes early for check-in.`);
       console.error("RAG cron error:", e.message);
     }
   });
+
+  // 7-Day Inactive User Reminder
+  cron.schedule("0 10 * * *", async () => { // Runs daily at 10:00 AM
+    try {
+      // Find users inactive for > 7 days
+      const [rows] = await mysqlPool.query(`
+        SELECT phone FROM tbl_chat_sessions 
+        WHERE last_message_at < DATE_SUB(NOW(), INTERVAL 7 DAY) 
+        LIMIT 20
+      `);
+
+      if (rows.length > 0) {
+        console.log(`Sending 7-day reminders to ${rows.length} users...`);
+        for (const row of rows) {
+          const { phone } = row;
+          const reminderMsg = `👋 Hi there! It's been a while.\nAre you still looking for packaging solutions? 📦\n\nWe have new stock of Cake Boxes and Paper Bags!\nReply 'menu' to browse our latest collection or ask our AI assistant for help. 😊`;
+          
+          await sendWhatsApp(phone, reminderMsg);
+          
+          // Update timestamp to avoid re-sending immediately
+          await mysqlPool.query("UPDATE tbl_chat_sessions SET last_message_at = NOW() WHERE phone = ?", [phone]);
+          
+          // Delay to respect rate limits
+          await new Promise(r => setTimeout(r, 2000));
+        }
+      }
+    } catch (err) {
+      console.error("Reminder cron error:", err);
+    }
+  });
 }
 
 module.exports = startCronJobs;
