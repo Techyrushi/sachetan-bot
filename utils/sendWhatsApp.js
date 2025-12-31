@@ -75,7 +75,11 @@ async function sendWhatsApp(to, body, options = {}) {
   };
 
   if (options.mediaUrl) {
-    msgData.mediaUrl = [options.mediaUrl];
+    if (options.mediaUrl.startsWith("http://") || options.mediaUrl.startsWith("https://")) {
+      msgData.mediaUrl = [options.mediaUrl];
+    } else {
+      console.warn("Skipping invalid mediaUrl (missing protocol):", options.mediaUrl);
+    }
   }
 
   return client.messages.create(msgData);

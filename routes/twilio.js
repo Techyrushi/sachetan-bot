@@ -455,7 +455,7 @@ router.post("/", async (req, res) => {
     ) {
       delete sessions[from];
       sessions[from] = { stage: "menu" };
-      const logoUrl = `${"https://sachetanpackaging.in"}/assets/uploads/logo.png`;
+      const logoUrl = "https://sachetanpackaging.in/assets/uploads/logo.png";
 
       await sendAndLog(from, "", { mediaUrl: logoUrl });
       await new Promise((r) => setTimeout(r, 3000)); // Wait 1.5s for media to arrive first
@@ -488,7 +488,7 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
 
     if (!sessions[from]) {
       sessions[from] = { stage: "menu" };
-      const logoUrl = `${"https://sachetanpackaging.in"}/assets/uploads/logo.png`;
+      const logoUrl = "https://sachetanpackaging.in/assets/uploads/logo.png";
       await sendAndLog(from, "", { mediaUrl: logoUrl });
       await new Promise((r) => setTimeout(r, 3000)); // Wait 5s for media to arrive first
       await sendAndLog(
