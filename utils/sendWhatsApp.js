@@ -28,14 +28,21 @@ async function sendWhatsApp(to, body, options = {}) {
     return;
   }
 
+  // Helper to validate media URL
+  const isValidMediaUrl = (url) => {
+    if (!url || typeof url !== 'string') return false;
+    const trimmed = url.trim().toLowerCase();
+    return (trimmed.startsWith("http://") || trimmed.startsWith("https://")) && trimmed.length > 8;
+  };
+
   // 1. Try sending via Content API (Real Interactive Buttons) if SID provided
   if (options.contentSid) {
     try {
-      if (options.sendLogoFirst && options.mediaUrl) {
+      if (options.sendLogoFirst && isValidMediaUrl(options.mediaUrl)) {
         await client.messages.create({
           from: TWILIO_WHATSAPP_NUMBER,
           to,
-          mediaUrl: [options.mediaUrl]
+          mediaUrl: [options.mediaUrl.trim()]
         });
         const delayMs = typeof options.logoDelayMs === "number" ? Math.max(0, Math.min(options.logoDelayMs, 5000)) : 800;
         await new Promise(resolve => setTimeout(resolve, delayMs));
@@ -74,12 +81,10 @@ async function sendWhatsApp(to, body, options = {}) {
     body: messageBody
   };
 
-  if (options.mediaUrl) {
-    if (options.mediaUrl.startsWith("http://") || options.mediaUrl.startsWith("https://")) {
-      msgData.mediaUrl = [options.mediaUrl];
-    } else {
-      console.warn("Skipping invalid mediaUrl (missing protocol):", options.mediaUrl);
-    }
+  if (isValidMediaUrl(options.mediaUrl)) {
+    msgData.mediaUrl = [options.mediaUrl.trim()];
+  } else if (options.mediaUrl) {
+    console.warn("Skipping invalid mediaUrl:", options.mediaUrl);
   }
 
   return client.messages.create(msgData);

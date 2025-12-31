@@ -406,6 +406,8 @@ router.post("/", async (req, res) => {
         console.error("Media download failed:", e);
         // Fallback: log the original Twilio URL if download fails
         await logChatToDB(from, 'user', '[Media Upload Failed]', mediaUrl);
+        await sendAndLog(from, "⚠️ We couldn't download your file. Please try sending it again.");
+        return res.end();
       }
     }
 
