@@ -373,10 +373,17 @@ router.post("/", async (req, res) => {
       const filename = `user_${Date.now()}.${ext}`;
       
       try {
+        console.log(`Downloading media from ${mediaUrl} to ${filename}`);
         await downloadMedia(mediaUrl, filename);
-        await sendAndLog(from, "✅ We have received your file. Our team will review it and get back to you with a customized solution.");
         
-        const localMediaUrl = `${process.env.BASE_URL || "https://support.sachetanpackaging.in"}/uploads/${filename}`;
+        const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+        const host = req.headers['x-forwarded-host'] || req.get('host');
+        const baseUrl = process.env.BASE_URL || `${protocol}://${host}`;
+        const localMediaUrl = `${baseUrl}/uploads/${filename}`;
+        
+        console.log(`Media saved locally at: ${localMediaUrl}`);
+
+        await sendAndLog(from, "✅ We have received your file. Our team will review it and get back to you with a customized solution.");
         
         await logChatToDB(from, 'user', '[Media Upload]', localMediaUrl);
 
@@ -397,6 +404,8 @@ router.post("/", async (req, res) => {
         return res.end();
       } catch (e) {
         console.error("Media download failed:", e);
+        // Fallback: log the original Twilio URL if download fails
+        await logChatToDB(from, 'user', '[Media Upload Failed]', mediaUrl);
       }
     }
 
