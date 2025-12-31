@@ -22,10 +22,22 @@ async function downloadMedia(url, filename) {
   }
   const writer = fs.createWriteStream(path.join(uploadDir, filename));
 
+  // Twilio requires Basic Auth for media downloads if enabled in settings
+  // We use the Account SID and Auth Token from environment variables
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  
+  const headers = {};
+  if (accountSid && authToken) {
+    const auth = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+    headers['Authorization'] = `Basic ${auth}`;
+  }
+
   const response = await axios({
     url,
     method: 'GET',
-    responseType: 'stream'
+    responseType: 'stream',
+    headers: headers
   });
 
   response.data.pipe(writer);
