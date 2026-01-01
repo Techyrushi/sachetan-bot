@@ -492,7 +492,7 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
 👇 *Please select a service:*
 
 *1️⃣ Buy Products* - Browse catalog & order
-*2️⃣ AI Assistant* - Product Queries
+*2️⃣ Custom Solutions* - Product Queries  
 *3️⃣ FAQ & Support* - Contact Us  
         _Reply with a number to proceed._`,
         { contentSid: process.env.TWILIO_CONTENT_SID_SERVICES }
@@ -524,7 +524,7 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
 👇 *Please select a service:*
 
 *1️⃣ Buy Products* - Browse catalog & order
-*2️⃣ AI Assistant* - Product Queries
+*2️⃣ Custom Solutions* - Product Queries  
 *3️⃣ FAQ & Support* - Contact Us    
 
         _Reply with a number to proceed._`,
@@ -558,10 +558,10 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
         return res.end();
       } else if (
         body === "2" ||
-        body.includes("assistant") ||
-        body.includes("ai")
+        body.includes("solutions") ||
+        body.includes("custom")
       ) {
-        session.stage = "ai_assistant";
+        session.stage = "custom_solutions";
         await sendAndLog(
           from,
           `👋 Hi! Welcome to *Sachetan Packaging* 😊
@@ -739,7 +739,7 @@ Reply with 'menu' to return to main menu.`
           `🧰 *Sachetan Packaging*
 
 *1️⃣ Buy Products* - Browse categories and order
-*2️⃣ AI Assistant* - Ask product FAQs
+*2️⃣ Custom Solutions* - Get personalized packaging
 *3️⃣ FAQ & Support* - Help and contact
 
 Reply with a number or option name.`
@@ -786,7 +786,7 @@ Reply with a number or option name.`
     if (session.stage === "confirm_exit_flow") {
       if (body === "1" || body.toLowerCase() === "yes") {
         // User wants to exit flow and ask AI
-        session.stage = "ai_assistant";
+        session.stage = "custom_solutions";
         // We can treat the pending question as the input for AI immediately
         const question = session.pendingQuestion;
         delete session.pendingQuestion;
@@ -847,7 +847,7 @@ Reply with a number or option name.`
             `⚠️ You are currently ordering. Do you want to cancel and ask: "${body}"?`,
             {
               buttons: [
-                { id: "yes", text: "Yes, ask AI" },
+                { id: "yes", text: "Yes, ask Custom Solutions" },
                 { id: "no", text: "No, continue order" },
               ],
             }
@@ -1298,7 +1298,7 @@ Reply 'menu' to return.`,
     }
 
 
-    if (session.stage === "ai_assistant") {
+    if (session.stage === "custom_solutions") {
       const question = (req.body.Body || "").trim();
       session.sales = session.sales || {
         askedNameCity: false,
@@ -1417,7 +1417,7 @@ Reply 'menu' to return.`,
           
 *1️⃣ Buy Products*
 *2️⃣ Order Status*
-*3️⃣ AI Assistant*
+*3️⃣ Custom Solutions*
 *4️⃣ FAQ & Support*
 
 Reply with a number.`
@@ -1442,7 +1442,7 @@ Reply with a number.`
           phone: from,
           name: session.sales.name || "",
           city: session.sales.city || "",
-          stage: "ai_assistant",
+          stage: "custom_solutions",
           message: question,
           reply: result.mediaUrls && result.mediaUrls.length > 0 ? `${reply} [Media: ${result.mediaUrls.join(", ")}]` : reply,
         });
@@ -1526,7 +1526,7 @@ Reply with a number.`
           "⚠️ Oops! Our assistant is taking a short break. Please try again in a few moments - we’ll be right back to help you 😊"
         );
       }
-      // Stay in ai_assistant stage
+      // Stay in custom_solutions stage
       return res.end();
     }
 

@@ -9550,7 +9550,7 @@ CREATE TABLE `user` (
         'ENTERING_QUANTITY',
         'CONFIRMING_ORDER',
         'AWAITING_PAYMENT',
-        'AI_ASSISTANT',
+        'CUSTOM_SOLUTIONS',
         'ORDER_STATUS'
     ) NOT NULL DEFAULT 'GREETING',
     `createdAt` datetime(6) NOT NULL DEFAULT current_timestamp(6),
@@ -9576,7 +9576,7 @@ VALUES (
         'a71b5a84-8cda-40b0-84d1-b96ee6d0c303',
         'whatsapp:+918446225859',
         NULL,
-        'AI_ASSISTANT',
+        'CUSTOM_SOLUTIONS',
         '2025-12-17 05:46:02.355350',
         '2025-12-17 06:29:06.000000',
         NULL
