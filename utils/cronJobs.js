@@ -2,9 +2,82 @@ const cron = require("node-cron");
 const Booking = require("../models/Booking");
 const sendWhatsApp = require("./sendWhatsApp");
 const mysqlPool = require("../config/mysql");
-const { upsertDocuments } = require("./rag");
+const { upsertDocuments, resetIndex } = require("./rag");
+
+async function syncProducts(reset = false) {
+  try {
+    if (reset) {
+      await resetIndex();
+    }
+
+    console.log("Starting product sync...");
+    const [products] = await mysqlPool.query(`
+      SELECT 
+        p.p_id, p.p_name, p.p_old_price, p.p_current_price, p.p_featured_photo, p.total_quantity, p.p_description,
+        t.tcat_name, m.mcat_name, e.ecat_name
+      FROM tbl_product p
+      LEFT JOIN tbl_end_category e ON p.ecat_id = e.ecat_id
+      LEFT JOIN tbl_mid_category m ON e.mcat_id = m.mcat_id
+      LEFT JOIN tbl_top_category t ON m.tcat_id = t.tcat_id
+      WHERE p.total_quantity > 0
+    `);
+
+    const docs = [];
+    for (const pr of products || []) {
+      // Construct rich text for RAG
+      const price = pr.p_current_price || pr.p_old_price || "Contact for Price";
+      const categoryPath = [pr.tcat_name, pr.mcat_name, pr.ecat_name].filter(Boolean).join(" > ");
+      const imageUrl = pr.p_featured_photo
+        ? `https://sachetanpackaging.in/assets/uploads/${pr.p_featured_photo}` 
+        : "";
+
+      let text = `Product: ${pr.p_name}\n`;
+      text += `Category: ${categoryPath}\n`;
+      text += `Price: ₹${price}\n`;
+      text += `Description: ${pr.p_description || "No description available."}\n`;
+      
+      if (imageUrl) {
+        text += `Image Available: ${imageUrl}\n`;
+      }
+
+      let type = "Homebakers";
+      const catLower = (pr.tcat_name || "").toLowerCase();
+      if (catLower.includes("store owner") || catLower.includes("bulk buyer")) type = "Store Owner/ Bulk Buyer";  
+      else if (catLower.includes("sweet shop owner")) type = "Sweet Shop Owner";        
+
+      // Metadata for filtering
+      const metadata = {
+        source: "tbl_product",
+        type: type,
+        price: String(price),
+        category: categoryPath
+      };
+
+      docs.push({ 
+        id: `product_${pr.p_id}`, 
+        text, 
+        metadata 
+      });
+    }
+
+    if (docs.length) {
+      console.log(`Upserting ${docs.length} products to Pinecone...`);
+      await upsertDocuments(docs);
+      console.log("Product sync complete.");
+    } else {
+      console.log("No products found to sync.");
+    }
+
+  } catch (e) {
+    console.error("Product sync error:", e.message);
+  }
+}
 
 function startCronJobs() {
+  // Run product sync immediately on startup (Reset + Add)
+  // This satisfies "freshly we add data"
+  syncProducts(true);
+
   // run every 15 minutes
   cron.schedule("*/15 * * * *", async () => {
     try {
@@ -74,6 +147,7 @@ Please arrive 10 minutes early for check-in.`);
 
   cron.schedule("0 * * * *", async () => {
     try {
+      // Sync Pages/Services (Keep existing logic)
       const [pages] = await mysqlPool.query("SELECT * FROM `tbl_page` LIMIT 1");
       const docs = [];
       if (pages && pages.length) {
@@ -89,24 +163,23 @@ Please arrive 10 minutes early for check-in.`);
         ];
         for (const [id, text] of fields) {
           if (text && String(text).trim().length > 0) {
-            docs.push({ id, text: String(text), metadata: { source: "tbl_page" } });
+            docs.push({ id, text: String(text), metadata: { source: "tbl_page", type: "all" } });
           }
         }
       }
       const [services] = await mysqlPool.query("SELECT * FROM `tbl_service`");
       for (const s of services || []) {
         if (s.content) {
-          docs.push({ id: `service_${s.id}`, text: String(s.content), metadata: { source: "tbl_service", title: s.title } });
+          docs.push({ id: `service_${s.id}`, text: String(s.content), metadata: { source: "tbl_service", title: s.title, type: "all" } });
         }
-      }
-      const [products] = await mysqlPool.query("SELECT `p_id`,`p_name`,`p_description` FROM `tbl_product` ORDER BY `p_total_view` DESC LIMIT 100");
-      for (const pr of products || []) {
-        const text = `${pr.p_name}\n${pr.p_description || ""}`;
-        docs.push({ id: `product_${pr.p_id}`, text, metadata: { source: "tbl_product" } });
       }
       if (docs.length) {
         await upsertDocuments(docs);
       }
+      
+      // Sync Products (New Logic - Incremental)
+      await syncProducts(false); // reset=false for incremental updates
+
     } catch (e) {
       console.error("RAG cron error:", e.message);
     }

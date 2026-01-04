@@ -74,7 +74,7 @@ router.get("/documents", auth, async (req, res) => {
 
 // 2. ADD MANUAL TEXT
 router.post("/manual", auth, async (req, res) => {
-  let { title, content } = req.body;
+  let { title, content, userType } = req.body;
   let updatedContent = content;
   if (!title || !content) return res.status(400).json({ error: "Title and content are required." });
 
@@ -88,7 +88,8 @@ router.post("/manual", auth, async (req, res) => {
 
     // 2. Add to Pinecone
     try {
-      await upsertDocuments([{ id: docId, text: content, metadata: { title, source: "manual" } }]);
+      const type = userType || "all";
+      await upsertDocuments([{ id: docId, text: content, metadata: { title, source: "manual", type } }]);
     } catch (pineconeError) {
       console.error("Pinecone upsert failed, rolling back MySQL:", pineconeError);
       await pool.query("DELETE FROM tbl_ai_knowledge WHERE doc_id = ?", [docId]);
@@ -102,13 +103,15 @@ router.post("/manual", auth, async (req, res) => {
   }
 });
 
-// 3. UPLOAD FILE (TXT, CSV, EXCEL)
-router.post("/upload", auth, upload.single("file"), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: "No file uploaded." });
+// 3. UPLOAD FILE (TXT, CSV, EXCEL) WITH OPTIONAL IMAGES
+router.post("/upload", auth, upload.fields([{ name: "file", maxCount: 1 }, { name: "images", maxCount: 10 }]), async (req, res) => {
+  const fileInfo = (req.files && req.files.file && req.files.file[0]) || req.file;
+  if (!fileInfo) return res.status(400).json({ error: "No file uploaded." });
 
-  const filePath = req.file.path;
-  const ext = path.extname(req.file.originalname).toLowerCase();
-  const title = req.body.title || req.file.originalname;
+  const filePath = fileInfo.path;
+  const ext = path.extname(fileInfo.originalname).toLowerCase();
+  const title = req.body.title || fileInfo.originalname;
+  const userType = (req.body.userType || "").trim();
   let content = "";
 
   try {
@@ -116,9 +119,14 @@ router.post("/upload", auth, upload.single("file"), async (req, res) => {
       content = fs.readFileSync(filePath, "utf-8");
     } else if (ext === ".xlsx" || ext === ".xls") {
       const workbook = xlsx.readFile(filePath);
-      const sheetName = workbook.SheetNames[0];
-      const sheet = workbook.Sheets[sheetName];
-      content = xlsx.utils.sheet_to_csv(sheet);
+      // Iterate over all sheets
+      workbook.SheetNames.forEach(sheetName => {
+        const sheet = workbook.Sheets[sheetName];
+        const sheetContent = xlsx.utils.sheet_to_csv(sheet);
+        if (sheetContent && sheetContent.trim()) {
+          content += `\n--- Sheet: ${sheetName} ---\n${sheetContent}`;
+        }
+      });
     } else if (ext === ".csv") {
       const results = [];
       await new Promise((resolve, reject) => {
@@ -137,17 +145,30 @@ router.post("/upload", auth, upload.single("file"), async (req, res) => {
 
     if (!content.trim()) throw new Error("File is empty.");
 
+    // Handle optional images: append "Image Available: <url>" lines to content
+    const imageFiles = (req.files && req.files.images) || [];
+    const imageUrls = imageFiles.map(f => `${process.env.BASE_URL}/uploads/${f.filename}`);
+    if (imageUrls.length > 0) {
+      const imageLines = imageUrls.map(url => `Image Available: ${url}`).join("\n");
+      content = `${content}\n\n${imageLines}`.trim();
+    }
+
     const docId = `file_${Date.now()}`;
     
     // 1. Add to MySQL
     await pool.query(
       "INSERT INTO tbl_ai_knowledge (doc_id, title, content, source_type, source_name) VALUES (?, ?, ?, 'file', ?)",
-      [docId, title, content, req.file.originalname]
+      [docId, title, content, fileInfo.originalname]
     );
 
     // 2. Add to Pinecone
     try {
-      await upsertDocuments([{ id: docId, text: content, metadata: { title, source: req.file.originalname } }]);
+      const metadata = { title, source: fileInfo.originalname };
+      if (imageUrls.length > 0) {
+        metadata.imageUrl = imageUrls.join(",");
+      }
+      metadata.type = userType || "all";
+      await upsertDocuments([{ id: docId, text: content, metadata }]);
     } catch (pineconeError) {
       console.error("Pinecone upload failed, rolling back MySQL:", pineconeError);
       await pool.query("DELETE FROM tbl_ai_knowledge WHERE doc_id = ?", [docId]);
@@ -161,6 +182,7 @@ router.post("/upload", auth, upload.single("file"), async (req, res) => {
     res.status(500).json({ error: err.message });
   } finally {
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath); // Cleanup
+    // Note: Uploaded images are intentionally retained in /uploads and referenced by URL
   }
 });
 
@@ -287,7 +309,7 @@ router.delete("/documents/:id", auth, async (req, res) => {
 
 // 6. ADD PRODUCT (Image + Text)
 router.post("/product", auth, upload.array("images", 10), async (req, res) => {
-  const { name, description, price, category } = req.body;
+  const { name, description, price, category, userType } = req.body;
   if (!req.files || req.files.length === 0) return res.status(400).json({ error: "Product image is required." });
 
   // Handle multiple images
@@ -315,7 +337,7 @@ router.post("/product", auth, upload.array("images", 10), async (req, res) => {
           metadata: { 
               title: name, 
               source: "admin_product", 
-              type: "product",
+              type: userType || "Homebakers",
               imageUrl: imageUrlsString,
               price: price
           } 

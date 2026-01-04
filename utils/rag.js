@@ -174,49 +174,75 @@ async function upsertDocuments(docs, collectionName = DEFAULT_COLLECTION) {
   return { ok: true, count: vectors.length };
 }
 
-async function searchTavily(query) {
-  const apiKey = process.env.TAVILY_API_KEY;
-  if (!apiKey) return "";
-  
+async function resetIndex(collectionName = DEFAULT_COLLECTION) {
   try {
-    const response = await axios.post("https://api.tavily.com/search", {
-      api_key: apiKey,
-      query: `Sachetan Packaging ${query}`,
-      search_depth: "basic",
-      include_domains: ["sachetanpackaging.in"],
-      max_results: 3
-    });
-    
-    if (response.data && Array.isArray(response.data.results)) {
-         return response.data.results.map(r => `[Web Search] ${r.title}: ${r.content}`).join("\n\n");
+    await ensureCollection(collectionName);
+    const index = pc.index(PINECONE_INDEX);
+    const namespace = index.namespace(collectionName);
+    try {
+      await namespace.deleteAll();
+      console.log(`Reset Pinecone namespace: ${collectionName}`);
+    } catch (deleteError) {
+       // Ignore 404 if namespace/index not found or empty
+       if (deleteError.name === 'PineconeNotFoundError' || (deleteError.message && deleteError.message.includes('404'))) {
+         console.log(`Namespace ${collectionName} was already empty or not found (404 ignored).`);
+       } else {
+         throw deleteError;
+       }
     }
-    return "";
-  } catch (e) {
-    console.error("Tavily search error:", e.message);
-    return "";
+    return true;
+  } catch (err) {
+    console.error("Error resetting index:", err);
+    return false;
   }
 }
 
-async function queryRag(query, topK = 4, collectionName = DEFAULT_COLLECTION) {
+  // Tavily fallback removed as per user request
+  /*
+  async function searchTavily(query) {
+    // ... (Tavily code disabled) ...
+    return "";
+  }
+  */
+
+async function queryRag(query, topK = 4, collectionName = DEFAULT_COLLECTION, filter = {}, strict = false) {
   const dim = await getIndexDimension();
   const queryRaw = await embedText(query);
   const queryEmb = adjustToDimension(queryRaw, dim);
   const index = pc.index(PINECONE_INDEX);
   const namespace = index.namespace(collectionName);
   
-  const response = await namespace.query({
-    vector: queryEmb,
-    topK,
-    includeMetadata: true,
-  });
+  let matches = [];
+  let docs = [];
 
-  const matches = response.matches || [];
-  const docs = matches.map(m => m.metadata?.text || "").filter(Boolean);
+  try {
+      const queryRequest = {
+        vector: queryEmb,
+        topK,
+        includeMetadata: true,
+      };
+      
+      // Apply filter if provided (e.g., { type: 'Homebakers' })
+      if (filter && Object.keys(filter).length > 0) {
+          queryRequest.filter = filter;
+      }
+
+      const response = await namespace.query(queryRequest);
+      matches = response.matches || [];
+      docs = matches.map(m => m.metadata?.text || "").filter(Boolean);
+
+  } catch (err) {
+      console.error("Pinecone query failed:", err);
+  }
   
-  // Add Tavily Search
-  const webContext = await searchTavily(query);
-  if (webContext) {
-      docs.push(webContext);
+  if (docs.length === 0) {
+      return { 
+          answer: "I apologize, but I couldn't find specific information regarding your query in our current records. 😓\n\nHowever, our support team is ready to help you!\n\n📞 *Call us:* +91 92263 22231 / +91 84460 22231\n📧 *Email:* sagar9994@rediffmail.com\n🌐 *Visit:* https://sachetanpackaging.in\n\nWould you like to try searching in a different category?", 
+          mediaUrls: [], 
+          context: "", 
+          matches: [],
+          isFallback: true
+      };
   }
 
   const context = docs.join("\n\n");
@@ -326,6 +352,7 @@ Multiple questions: answer clearly in points.
 module.exports = {
   upsertDocuments,
   queryRag,
+  resetIndex,
   ensureCollection,
   DEFAULT_COLLECTION,
   pingChroma: async () => {

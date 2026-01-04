@@ -118,6 +118,15 @@
               <label class="block text-sm font-semibold text-slate-700 mb-2">Document Title</label>
               <input type="text" id="upload-title" class="w-full px-5 py-4 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition bg-slate-50 focus:bg-white" placeholder="e.g. Q1 2025 Price List" />
             </div>
+            <div>
+              <label class="block text-sm font-semibold text-slate-700 mb-2">Business Type (Target Audience)</label>
+              <select id="upload-userType" class="w-full px-5 py-4 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition bg-slate-50 focus:bg-white">
+                 <option value="">All Types</option>
+                 <option value="Homebakers">Homebakers</option>
+                 <option value="Store Owner/ Bulk Buyer">Store Owner/ Bulk Buyer</option> 
+                 <option value="Sweet Shop Owner">Sweet Shop Owner</option> 
+              </select>
+            </div>
             
             <div class="group relative border-2 border-dashed border-slate-300 rounded-2xl p-10 text-center hover:bg-blue-50 hover:border-blue-400 transition cursor-pointer" onclick="document.getElementById('file-input').click()">
               <input type="file" id="file-input" class="hidden" accept=".txt,.csv,.xlsx" />
@@ -126,6 +135,12 @@
                 <p id="file-name" class="font-semibold text-lg text-slate-700">Click to upload file</p>
                 <p class="text-sm mt-2">Support: .txt, .csv, .xlsx (Max 5MB)</p>
               </div>
+            </div>
+
+            <div>
+              <label class="block text-sm font-semibold text-slate-700 mb-2">Associated Image(s) (Optional)</label>
+              <input type="file" id="upload-images" name="images" accept="image/*" multiple class="w-full px-5 py-4 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition bg-slate-50 focus:bg-white" />
+              <p class="text-xs text-slate-400 mt-1">You can add multiple images to accompany the file. These images will be referenced in AI memory.</p>
             </div>
 
             <button type="submit" class="w-full bg-blue-600 text-white py-4 rounded-xl hover:bg-blue-700 transition font-bold shadow-lg shadow-blue-200 flex justify-center items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed">
@@ -153,10 +168,18 @@
                 <label class="block text-sm font-semibold text-slate-700 mb-2">Category</label>
                 <select name="category" class="w-full px-5 py-4 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 transition bg-slate-50 focus:bg-white">
                    <option value="Box">Box</option>
+                   <option value="Base">Base</option>
+                   <option value="Boards">Boards</option>
                    <option value="Bag">Bag</option>
-                   <option value="Pouch">Pouch</option>
-                   <option value="Label">Label</option>
                    <option value="Other">Other</option>
+                </select>
+              </div>
+              <div class="md:col-span-2">
+                <label class="block text-sm font-semibold text-slate-700 mb-2">Business Type (Target Audience)</label>
+                <select name="userType" class="w-full px-5 py-4 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 transition bg-slate-50 focus:bg-white">
+                   <option value="Homebakers">Homebakers</option>
+                   <option value="Store Owner/ Bulk Buyer">Store Owner/ Bulk Buyer</option> 
+                   <option value="Sweet Shop Owner">Sweet Shop Owner</option>
                 </select>
               </div>
             </div>
@@ -192,6 +215,15 @@
             <div>
               <label class="block text-sm font-semibold text-slate-700 mb-2">Topic / Title</label>
               <input type="text" id="manual-title" class="w-full px-5 py-4 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 transition bg-slate-50 focus:bg-white" placeholder="e.g. Return Policy for Damaged Goods" required />
+            </div>
+            <div>
+              <label class="block text-sm font-semibold text-slate-700 mb-2">Business Type (Optional)</label>
+              <select id="manual-userType" class="w-full px-5 py-4 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 transition bg-slate-50 focus:bg-white">
+                 <option value="">All Types</option>
+                 <option value="Homebakers">Homebakers</option>
+                 <option value="Store Owner/ Bulk Buyer">Store Owner/ Bulk Buyer</option> 
+                 <option value="Sweet Shop Owner">Sweet Shop Owner</option> 
+              </select>
             </div>
             <div>
               <label class="block text-sm font-semibold text-slate-700 mb-2">Detailed Content</label>
@@ -426,12 +458,18 @@
     document.getElementById("upload-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const fileInput = document.getElementById("file-input");
+      const imagesInput = document.getElementById("upload-images");
+      const userType = document.getElementById("upload-userType").value;
       const title = document.getElementById("upload-title").value;
       if (!fileInput.files[0]) return Swal.fire("Warning", "Please select a file first.", "warning");
 
       const formData = new FormData();
       formData.append("file", fileInput.files[0]);
+      if (imagesInput && imagesInput.files && imagesInput.files.length > 0) {
+        Array.from(imagesInput.files).forEach(f => formData.append("images", f));
+      }
       if (title) formData.append("title", title);
+      formData.append("userType", userType || "");
 
       setLoading("upload-form", true);
       try {
@@ -489,9 +527,11 @@
         const div = document.createElement("div");
         div.className = `p-4 hover:bg-slate-50 cursor-pointer transition ${isActive ? 'bg-blue-50 border-l-4 border-blue-500' : ''}`;
         div.onclick = () => loadChatHistory(user.phone);
+        console.log(user.phone);
         div.innerHTML = `
           <div class="flex justify-between items-start mb-1">
             <span class="font-bold text-slate-800">${user.phone}</span>
+            
             <span class="text-xs text-slate-400">${new Date(user.last_message_at).toLocaleDateString()}</span>
           </div>
           <div class="flex justify-between items-center">
@@ -630,6 +670,7 @@
       e.preventDefault();
       const title = document.getElementById("manual-title").value;
       const content = document.getElementById("manual-content").value;
+      const userType = document.getElementById("manual-userType").value;
 
       setLoading("manual-form", true);
       try {
@@ -639,7 +680,7 @@
             "Content-Type": "application/json",
             "Authorization": `Bearer ${localStorage.getItem("admin_token")}` 
           },
-          body: JSON.stringify({ title, content })
+          body: JSON.stringify({ title, content, userType })
         });
         const data = await res.json();
         if (res.ok) {
@@ -751,11 +792,34 @@
                 detailsHtml += `</ul>`;
             }
         } else if (doc.source_type === 'file') {
-             detailsHtml = `
-                <div class="flex items-center gap-2 p-2 bg-slate-50 rounded-lg border border-slate-100 w-fit">
-                    <span class="text-lg">📄</span>
-                    <span class="text-xs font-mono text-slate-600 truncate max-w-[200px]" title="${doc.source_name}">${doc.source_name}</span>
-                </div>`;
+             const content = doc.content || "";
+             const urlMatches = [...content.matchAll(/Image Available:\s*(https?:\/\/\S+)/g)].map(m => m[1]);
+             if (urlMatches.length > 0) {
+                 detailsHtml = `<ul class="space-y-2 mt-1">`;
+                 urlMatches.forEach(url => {
+                   const filename = url.split('/').pop();
+                   detailsHtml += `
+                     <li class="flex items-center gap-3 group/img">
+                       <span class="w-1.5 h-1.5 bg-blue-400 rounded-full flex-shrink-0"></span>
+                       <a href="${url}" target="_blank" class="flex items-center gap-3 hover:bg-slate-50 p-1.5 rounded-lg transition border border-transparent hover:border-slate-200 w-full max-w-xs">
+                         <div class="w-10 h-10 rounded-lg overflow-hidden border border-slate-200 flex-shrink-0 bg-white">
+                           <img src="${url}" class="w-full h-full object-cover" alt="File Image" />
+                         </div>
+                         <div class="flex flex-col min-w-0">
+                           <span class="text-xs font-medium text-slate-700 truncate group-hover/img:text-blue-600 transition">${filename}</span>
+                           <span class="text-[10px] text-slate-400">Click to preview</span>
+                         </div>
+                       </a>
+                     </li>`;
+                 });
+                 detailsHtml += `</ul>`;
+             } else {
+               detailsHtml = `
+                  <div class="flex items-center gap-2 p-2 bg-slate-50 rounded-lg border border-slate-100 w-fit">
+                      <span class="text-lg">📄</span>
+                      <span class="text-xs font-mono text-slate-600 truncate max-w-[200px]" title="${doc.source_name}">${doc.source_name}</span>
+                  </div>`;
+             }
         } else if (doc.source_type === 'manual') {
              detailsHtml = `<div class="text-xs text-slate-500 line-clamp-2 max-w-xs">${doc.content.substring(0, 100)}...</div>`;
         }

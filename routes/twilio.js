@@ -26,7 +26,7 @@ async function downloadMedia(url, filename) {
   // We use the Account SID and Auth Token from environment variables
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
-  
+
   const headers = {};
   if (accountSid && authToken) {
     const auth = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
@@ -374,7 +374,7 @@ router.post("/", async (req, res) => {
 
     // Log incoming text if present
     if (req.body.Body) {
-        await logChatToDB(from, 'user', req.body.Body);
+      await logChatToDB(from, 'user', req.body.Body);
     }
 
     // Handle Media Uploads
@@ -383,20 +383,20 @@ router.post("/", async (req, res) => {
       const mediaType = req.body.MediaContentType0;
       const ext = mediaType.split("/")[1] || "bin";
       const filename = `user_${Date.now()}.${ext}`;
-      
+
       try {
         console.log(`Downloading media from ${mediaUrl} to ${filename}`);
         await downloadMedia(mediaUrl, filename);
-        
+
         const protocol = req.headers['x-forwarded-proto'] || req.protocol;
         const host = req.headers['x-forwarded-host'] || req.get('host');
         const baseUrl = process.env.BASE_URL || `${protocol}://${host}`;
         const localMediaUrl = `${baseUrl}/uploads/${filename}`;
-        
+
         console.log(`Media saved locally at: ${localMediaUrl}`);
 
         await sendAndLog(from, "✅ We have received your file. Our team will review it and get back to you with a customized solution.");
-        
+
         await logChatToDB(from, 'user', '[Media Upload]', localMediaUrl);
 
         // Log to Excel
@@ -412,7 +412,7 @@ router.post("/", async (req, res) => {
           reply: "File received",
           mediaUrl: localMediaUrl
         });
-        
+
         return res.end();
       } catch (e) {
         console.error("Media download failed:", e);
@@ -535,6 +535,45 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
 
     const session = sessions[from];
 
+    if (session.stage === "select_user_type") {
+      let type = "";
+      if (body === "1" || body.includes("home")) type = "Homebakers";
+      else if (body === "2" || body.includes("store") || body.includes("bulk")) type = "Store Owner/ Bulk Buyer";
+      else if (body === "3" || body.includes("sweet")) type = "Sweet Shop Owner";
+
+      if (type) {
+        session.userType = type;
+        session.stage = "custom_solutions";
+        await sendAndLog(from, `✅ You selected: *${type}*
+
+To help you better, please share:
+📦 Product (e.g., cake box, cake base, paper bag)  
+📏 Size or usage (e.g., 1 kg cake)  
+🎨 Plain or printed design  
+🔢 Approximate quantity  
+
+💬 *Language Note:*  
+You can chat with our team in **your local language or English** — whatever you’re comfortable with 😊  
+
+Not sure about all the details? No worries at all! Just share what you know, and we’ll guide you step by step to the best packaging solution 💛`);
+      } else {
+        await sendAndLog(
+          from,
+          `⚠️ Please select a valid option (1, 2, or 3).
+
+👇 *Please select your business type:*
+
+*1️⃣ Homebakers*
+*2️⃣ Store Owner/ Bulk Buyer*
+*3️⃣ Sweet Shop Owner*
+
+_Reply with a number to proceed._`,
+          { contentSid: process.env.TWILIO_CONTENT_SID_USER_TYPE }
+        );
+      }
+      return res.end();
+    }
+
     if (session.stage === "menu") {
       if (body === "1" || body.includes("buy") || body.includes("product")) {
         session.stage = "shop_top_category";
@@ -561,19 +600,20 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
         body.includes("solutions") ||
         body.includes("custom")
       ) {
-        session.stage = "custom_solutions";
+        session.stage = "select_user_type";
         await sendAndLog(
           from,
           `👋 Hi! Welcome to *Sachetan Packaging* 😊
 We offer *customized packaging solutions* just for you!
 
-Tell me:
-📦 Your product (e.g., cake box, cake base, paper bag)  
-📏 Size or usage (e.g., 1 kg cake)
-🎨 Plain or printed design
-🔢 Approx quantity
+👇 *Please select your business type:*
 
-Not sure about all details? No worries - just share what you can, and I’ll help you pick the best option! 💛`
+*1️⃣ Homebakers*
+*2️⃣ Store Owner/ Bulk Buyer*
+*3️⃣ Sweet Shop Owner*
+
+_Reply with a number to proceed._`,
+          { contentSid: process.env.TWILIO_CONTENT_SID_USER_TYPE }
         );
         return res.end();
       } else if (body === "3" || body.includes("support") || body.includes("faq")) {
@@ -748,14 +788,45 @@ Reply with a number or option name.`
       } else {
         // Fallback to AI for any text that isn't a menu command
         try {
-          const result = await queryRag(body);
-          let answer = result.answer || "I'm not sure about that. Reply 'menu' to see options.";
-          
+          // Strict filtering by user type if selected
+          const filter = session.userType ? { type: session.userType } : {};
+          // Use strict mode if userType is selected to avoid Tavily/outside context
+          const strict = !!session.userType;
+
+          const result = await queryRag(body, 4, undefined, filter, strict);
+          let answer = result.answer;
+
+          // If strict mode and answer indicates failure, prompt to re-initiate
+          if (strict && (
+              !answer || 
+              answer.includes("I'm not sure") || 
+              answer.includes("couldn't find information") ||
+              !result.context // If no context found in strict mode
+          )) {
+             await sendAndLog(from, `I couldn't find specific information for *${session.userType}* regarding your query.
+
+Would you like to search in another category?
+
+👇 *Please select your business type:*
+
+*1️⃣ Homebakers*
+*2️⃣ Store Owner/ Bulk Buyer*
+*3️⃣ Sweet Shop Owner*
+
+_Reply with a number to proceed._`);
+             
+             // Reset stage to allow selection
+             session.stage = "select_user_type";
+             return res.end();
+          }
+
+          if (!answer) answer = "I'm not sure about that. Reply 'menu' to see options.";
+
           await sendAndLog(from, answer);
           if (result.mediaUrls && result.mediaUrls.length > 0) {
-              for (const mediaUrl of result.mediaUrls) {
-                  await sendAndLog(from, "", { mediaUrl });
-              }
+            for (const mediaUrl of result.mediaUrls) {
+              await sendAndLog(from, "", { mediaUrl });
+            }
           }
 
           // Optional: save to memory
@@ -1334,11 +1405,11 @@ Reply 'menu' to return.`,
         const isValidName = (n) => {
           if (!n || n.length < 2) return false;
           const words = n.split(" ");
-          if (words.length > 3) return false; 
+          if (words.length > 3) return false;
           if (words.some(w => blocklist.includes(w.toLowerCase()))) return false;
           return /^[a-zA-Z ]+$/.test(n);
         };
-        
+
         const isValidCity = (c) => {
           if (!c || c.length < 2) return false;
           if (blocklist.includes(c.toLowerCase())) return false;
@@ -1347,28 +1418,28 @@ Reply 'menu' to return.`,
 
         let name = null, city = null;
         let m;
-        
+
         m = s.match(/name\s*[:\-]\s*([a-zA-Z ]{2,})/i);
         if (m && isValidName(m[1].trim())) name = m[1].trim();
-        
+
         m = s.match(/\bcity\s*[:\-]\s*([a-zA-Z ]{2,})/i);
         if (m && isValidCity(m[1].trim())) city = m[1].trim();
-        
+
         m = s.match(/my name is\s+([a-zA-Z ]{2,})/i);
         if (!name && m && isValidName(m[1].trim())) name = m[1].trim();
-        
+
         m = s.match(/i am\s+([a-zA-Z ]{2,})/i);
         if (!name && m && isValidName(m[1].trim())) name = m[1].trim();
-        
+
         m = s.match(/\bfrom\s+([a-zA-Z ]{2,})/i);
         if (!city && m && isValidCity(m[1].trim())) city = m[1].trim();
-        
+
         if (askedHint && !name && !city) {
           const tokens = s.split(" ");
           if (tokens.length >= 2) {
             const cityCandidate = tokens[tokens.length - 1];
             const nameCandidate = tokens.slice(0, -1).join(" ");
-            
+
             if (isValidName(nameCandidate) && isValidCity(cityCandidate)) {
               name = nameCandidate;
               city = cityCandidate;
@@ -1426,16 +1497,17 @@ Reply with a number.`
       }
 
       try {
-        const result = await queryRag(question);
+        const filter = session.userType ? { type: { $in: [session.userType, "all"] } } : {};
+        const result = await queryRag(question, 4, undefined, filter);
         let reply = result.answer || "No answer available right now.";
-        
+
         await sendAndLog(from, reply);
-        
+
         // Send media separately if available
         if (result.mediaUrls && result.mediaUrls.length > 0) {
-            for (const mediaUrl of result.mediaUrls) {
-                await sendAndLog(from, "", { mediaUrl });
-            }
+          for (const mediaUrl of result.mediaUrls) {
+            await sendAndLog(from, "", { mediaUrl });
+          }
         }
 
         await logConversation({

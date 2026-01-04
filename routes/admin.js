@@ -30,6 +30,8 @@ const allowedTables = new Set([
   "feedback",
   "tbl_rating",
   "tbl_scraped_pages",
+  "tbl_chat_history",
+  "tbl_chat_sessions"
 ]);
 async function fetchAllFromTable(table) {
   if (!allowedTables.has(table)) throw new Error("Table not allowed");
