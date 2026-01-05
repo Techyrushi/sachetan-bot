@@ -671,9 +671,7 @@ _Reply with a number to proceed._`,
         );
         return res.end();
       } else if (body === "3" || body.includes("support") || body.includes("faq")) {
-        await sendAndLog(
-          from,
-          `🏢 *Contact & Support*
+        const supportBody = `🏢 *Contact & Support*
 
 📍 *Address:*
 Plot No. J30, Near Jai Malhar Hotel, 
@@ -689,8 +687,14 @@ sagar9994@rediffmail.com
 🌐 *Website:*
 https://sachetanpackaging.in
 
-Reply 'menu' to return to main menu.`
-        );
+Reply 'menu' to return to main menu.`;
+
+        const options = {};
+        if (process.env.TWILIO_CONTENT_SID_SUPPORT) {
+          options.contentSid = process.env.TWILIO_CONTENT_SID_SUPPORT;
+        }
+
+        await sendAndLog(from, supportBody, options);
         return res.end();
       } else if (body.includes("book") || body.includes("court")) {
         session.stage = "choose_date";
