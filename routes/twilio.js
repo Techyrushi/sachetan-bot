@@ -465,51 +465,35 @@ router.post("/", async (req, res) => {
     router.sessions = router.sessions || {};
     const sessions = router.sessions;
 
-    // Handle initial greeting or restart
-    if (
-      body === "hi" ||
-      body === "hello" ||
-      body === "hey" ||
-      body === "hii" ||
-      body === "hiii" ||
-      body === "hola" ||
-      body === "restart" ||
-      body === "start" ||
-      body === "begin" ||
-      body === "menu" ||
-      body === "main menu" ||
-      body === "back" ||
-      body === "home" ||
-      body === "exit" ||
-      body === "end" ||
-      body === "stop" ||
-      body === "reset" ||
-      body === "thanks" ||
-      body === "thank you" ||
-      body === "thankyou" ||
-      body === "thx" ||
-      body === "ty" ||
-      body === "thank u" ||
-      body === "ok" ||
-      body === "okay" ||
-      body === "cool" ||
-      body === "done" ||
-      body === "confirmed" ||
-      body === "yes" ||
-      body === "yep" ||
-      body === "yo" ||
-      body === "good morning" ||
-      body === "good evening" ||
-      body === "good night" ||
-      body === "Thank you for confirming my booking." ||
-      body.includes(["Hi", "Thank you"])
-    ) {
+    // Define keyword lists
+    const greetingKeywords = [
+      "hi", "hello", "hey", "hii", "hiii", "hola",
+      "start", "begin", "restart",
+      "good morning", "good evening", "good night"
+    ];
+
+    const menuKeywords = [
+      "menu", "main menu", "back", "home", "exit", "end", "stop", "reset",
+      "thanks", "thank you", "thankyou", "thx", "ty", "thank u",
+      "ok", "okay", "cool", "done", "confirmed",
+      "yes", "yep", "yo",
+      "thank you for confirming my booking."
+    ];
+
+    const isGreeting = greetingKeywords.includes(body) || body.includes("hi") && body.length < 5; // Simple heuristic for "Hi there" etc.
+    const isMenu = menuKeywords.includes(body);
+
+    if (isGreeting || isMenu) {
       delete sessions[from];
       sessions[from] = { stage: "menu" };
-      const logoUrl = "https://sachetanpackaging.in/assets/uploads/logo.png";
+      
+      // Only send logo and full welcome for greetings (not for menu/back)
+      if (isGreeting) {
+        const logoUrl = "https://sachetanpackaging.in/assets/uploads/logo.png";
+        await sendAndLog(from, "", { mediaUrl: logoUrl });
+        await new Promise((r) => setTimeout(r, 3000)); // Wait 3s for media
+      }
 
-      await sendAndLog(from, "", { mediaUrl: logoUrl });
-      await new Promise((r) => setTimeout(r, 3000)); // Wait 1.5s for media to arrive first
       await sendAndLog(
         from,
         `🌟 *Welcome to Sachetan Packaging*
