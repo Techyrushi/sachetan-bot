@@ -477,7 +477,8 @@ router.post("/", async (req, res) => {
       "thanks", "thank you", "thankyou", "thx", "ty", "thank u",
       "ok", "okay", "cool", "done", "confirmed",
       "yes", "yep", "yo",
-      "thank you for confirming my booking."
+      "thank you for confirming my booking.",
+      "go to menu", "Go to Menu" // Added explicit match for "Go to Menu" button text
     ];
 
     const isGreeting = greetingKeywords.includes(body) || body.includes("hi") && body.length < 5; // Simple heuristic for "Hi there" etc.
@@ -829,6 +830,42 @@ Reply with a number or option name.`
         return res.end();
       } else {
         // Fallback to AI for any text that isn't a menu command
+        // Check if it's a greeting/menu command that wasn't caught by the top handler (shouldn't happen with updated lists)
+        // but just in case, we redirect to menu logic if it looks like one.
+        const lowerBody = body.toLowerCase();
+        if (
+          lowerBody === "hi" || lowerBody === "hello" || lowerBody === "menu" || lowerBody === "start" || 
+          lowerBody.includes("menu") || lowerBody.includes("thank")
+        ) {
+           // Redirect to menu logic by setting session and re-processing (or just sending menu directly)
+           // Here we just send the menu to be safe
+            await sendAndLog(
+            from,
+            `🌟 *Welcome to Sachetan Packaging*
+_Quality Packaging Solutions Since 2011_
+
+We are a premier organization engaged in manufacturing and supplying a wide assortment of:
+🎂 *Cake & Brownie Boxes*
+🍰 *Pastry Boxes*
+🧁 *Cup Cake Boxes*
+🥡 *Laminated Boxes & Bases*
+📦 *Customized Boxes & Bases*
+
+🌐 *Visit us:* https://sachetanpackaging.in
+
+──────────────────
+
+👇 *Please select a service:*
+
+*1️⃣ Buy Products* - Browse catalog & order
+*2️⃣ Custom Solutions* - Product Queries  
+*3️⃣ FAQ & Support* - Contact Us  
+        _Reply with a number to proceed._`,
+            { contentSid: process.env.TWILIO_CONTENT_SID_SERVICES }
+          );
+          return res.end();
+        }
+
         try {
           // Strict filtering by user type if selected
           const filter = session.userType ? { type: session.userType } : {};
