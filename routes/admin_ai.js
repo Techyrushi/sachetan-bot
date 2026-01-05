@@ -6,6 +6,7 @@ const csv = require("csv-parser");
 const fs = require("fs");
 const path = require("path");
 const pool = require("../config/mysql");
+const sendWhatsApp = require("../utils/sendWhatsApp");
 const { upsertDocuments, deleteDocument } = require("../utils/rag");
 const auth = require("../middleware/auth");
 
@@ -258,12 +259,14 @@ router.delete("/documents/:id", auth, async (req, res) => {
     const { doc_id, source_type, source_name } = rows[0];
 
     // Delete from Pinecone
+    console.log(`[Admin] Deleting doc from Pinecone: ${doc_id}`);
     const pineconeDeleted = await deleteDocument(doc_id);
     if (!pineconeDeleted) {
         // We throw an error so the user knows it failed. 
         // We do NOT delete from MySQL so the user can try again.
         throw new Error("Failed to delete from AI database (Pinecone). Please try again.");
     }
+    console.log(`[Admin] Pinecone delete OK: ${doc_id}`);
 
     // Delete physical files if product/file
     if ((source_type === 'product' || source_type === 'file') && source_name) {
@@ -299,7 +302,9 @@ router.delete("/documents/:id", auth, async (req, res) => {
     }
 
     // Delete from MySQL
+    console.log(`[Admin] Deleting row from MySQL: id=${id}`);
     await pool.query("DELETE FROM tbl_ai_knowledge WHERE id = ?", [id]);
+    console.log(`[Admin] MySQL delete OK: id=${id}`);
 
     res.json({ success: true, message: "Document deleted successfully." });
   } catch (err) {
@@ -372,6 +377,77 @@ router.get("/chat/history/:phone", auth, async (req, res) => {
     const [rows] = await pool.query("SELECT * FROM tbl_chat_history WHERE phone = ? ORDER BY created_at ASC", [phone]);
     res.json(rows);
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 9. START MANUAL CHAT (TAKEOVER)
+router.post("/chat/manual/start", auth, async (req, res) => {
+  const { phone } = req.body;
+  if (!phone) return res.status(400).json({ error: "phone required" });
+  try {
+    const [rows] = await pool.query("SELECT stage FROM tbl_chat_sessions WHERE phone = ? LIMIT 1", [phone]);
+    const prevStage = rows.length ? rows[0].stage : null;
+    await pool.query(
+      "INSERT INTO tbl_chat_sessions (phone, stage, previous_stage) VALUES (?, 'manual', ?) ON DUPLICATE KEY UPDATE previous_stage=VALUES(previous_stage), stage='manual', last_message_at=NOW()",
+      [phone, prevStage]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 10. STOP MANUAL CHAT (RELEASE TO AI)
+router.post("/chat/manual/stop", auth, async (req, res) => {
+  const { phone } = req.body;
+  if (!phone) return res.status(400).json({ error: "phone required" });
+  try {
+    await pool.query(
+      "INSERT INTO tbl_chat_sessions (phone, stage) VALUES (?, 'menu') ON DUPLICATE KEY UPDATE stage=COALESCE(previous_stage,'menu'), previous_stage=NULL, last_message_at=NOW()",
+      [phone]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 11. SEND ADMIN MESSAGE
+router.post("/chat/send", auth, upload.array('files', 10), async (req, res) => {
+  const { phone, message } = req.body;
+  const files = req.files || [];
+
+  if (!phone || (!message && files.length === 0)) {
+      return res.status(400).json({ error: "phone and message or files required" });
+  }
+  
+  try {
+    // Case 1: Text only
+    if (files.length === 0) {
+        await sendWhatsApp(phone, message);
+        await pool.query("INSERT INTO tbl_chat_history (phone, sender, message, media_url, created_at) VALUES (?, 'admin', ?, NULL, NOW())", [phone, message]);
+    } 
+    // Case 2: Files (with optional text attached to first one)
+    else {
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            const mediaUrl = `${process.env.BASE_URL}/uploads/${file.filename}`;
+            const body = (i === 0) ? (message || "") : ""; // Attach text to first file only
+
+            await sendWhatsApp(phone, body, { mediaUrl });
+            
+            await pool.query(
+                "INSERT INTO tbl_chat_history (phone, sender, message, media_url, created_at) VALUES (?, 'admin', ?, ?, NOW())", 
+                [phone, body, mediaUrl]
+            );
+        }
+    }
+
+    await pool.query("INSERT INTO tbl_chat_sessions (phone, stage) VALUES (?, 'manual') ON DUPLICATE KEY UPDATE last_message_at=NOW()", [phone]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Send error:", err);
     res.status(500).json({ error: err.message });
   }
 });

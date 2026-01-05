@@ -149,12 +149,13 @@ async function logConversation(data) {
 
 async function logLead(data) {
   const range = process.env.GOOGLE_SHEETS_LEADS_RANGE || "Leads!A1";
-  await ensureHeaders(range, ["Timestamp", "Phone", "Name", "City", "Product", "Size", "Paper", "Quantity", "Printing", "Notes", "Converted"]);
+  await ensureHeaders(range, ["Timestamp", "Phone", "Name", "City", "Pincode", "Product", "Size", "Paper", "Quantity", "Printing", "Notes", "Converted"]);
   const values = [
     new Date().toISOString(),
     data.phone || "",
     data.name || "",
     data.city || "",
+    data.pincode || "",
     data.product || "",
     data.size || "",
     data.paper || "",
@@ -181,6 +182,40 @@ module.exports = {
   logConversation,
   logLead,
   logUserMedia,
+  readRange: async (range) => {
+    const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
+    const sheets = getSheetsApi();
+    if (!spreadsheetId || !sheets) return [];
+    const resp = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+    return resp.data.values || [];
+  },
+  listLeads: async () => {
+    let range = process.env.GOOGLE_SHEETS_LEADS_RANGE || "Leads!A1";
+    let rows = await module.exports.readRange(range);
+    if (!rows || rows.length === 0) {
+      try {
+        const titles = await module.exports.listSheets();
+        const fallbackTitle = (titles || []).find(t => /lead/i.test(String(t)));
+        if (fallbackTitle) {
+          range = `${fallbackTitle}!A1`;
+          rows = await module.exports.readRange(range);
+        }
+      } catch {}
+    }
+    if (!rows || rows.length === 0) return [];
+    const headers = rows[0];
+    const out = [];
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i];
+      const obj = {};
+      for (let j = 0; j < headers.length; j++) {
+        const k = headers[j];
+        obj[k] = r[j] || "";
+      }
+      out.push(obj);
+    }
+    return out;
+  },
   listSheets: async () => {
     const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
     const sheets = getSheetsApi();

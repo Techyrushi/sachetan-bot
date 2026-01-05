@@ -57,10 +57,29 @@ async function ensureSessionTable() {
       CREATE TABLE IF NOT EXISTS tbl_chat_sessions (
         phone VARCHAR(20) PRIMARY KEY,
         stage VARCHAR(50) DEFAULT 'menu',
+        previous_stage VARCHAR(50) NULL,
+        user_type VARCHAR(50) NULL,
         last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
+
+    // Backfill: add previous_stage if missing (safe when column exists)
+    try {
+      await mysqlPool.query(`
+        ALTER TABLE tbl_chat_sessions
+        ADD COLUMN previous_stage VARCHAR(50) NULL
+      `);
+    } catch (e) {
+      // Ignore error if column already exists
+    }
+
+    try {
+      await mysqlPool.query(`
+        ALTER TABLE tbl_chat_sessions
+        ADD COLUMN user_type VARCHAR(50) NULL
+      `);
+    } catch (e) {}
 
     // Chat History Table
     await mysqlPool.query(`
@@ -370,12 +389,30 @@ router.post("/", async (req, res) => {
     const body = (req.body.Body || "").trim().toLowerCase();
     const numMedia = parseInt(req.body.NumMedia || 0);
 
-    await updateSessionTimestamp(from, router.sessions && router.sessions[from] ? router.sessions[from].stage : 'menu');
-
-    // Log incoming text if present
+    // 1. Log incoming text if present (Always log user message first)
     if (req.body.Body) {
       await logChatToDB(from, 'user', req.body.Body);
     }
+
+    // 2. Check DB for Manual Mode
+    let isManual = false;
+    try {
+      const [rows] = await mysqlPool.query("SELECT stage FROM tbl_chat_sessions WHERE phone = ? LIMIT 1", [from]);
+      if (rows.length && rows[0].stage === 'manual') {
+        isManual = true;
+      }
+    } catch (e) {
+        console.error("DB Check Error:", e);
+    }
+
+    if (isManual) {
+        // Update timestamp only, keep stage manual
+        await mysqlPool.query("UPDATE tbl_chat_sessions SET last_message_at = NOW() WHERE phone = ?", [from]);
+        return res.end();
+    }
+
+    // 3. Update Session Timestamp for Bot (only if not manual)
+    await updateSessionTimestamp(from, router.sessions && router.sessions[from] ? router.sessions[from].stage : 'menu');
 
     // Handle Media Uploads
     if (numMedia > 0) {
@@ -501,13 +538,26 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
     }
 
     if (!sessions[from]) {
-      sessions[from] = { stage: "menu" };
-      const logoUrl = "https://sachetanpackaging.in/assets/uploads/logo.png";
-      await sendAndLog(from, "", { mediaUrl: logoUrl });
-      await new Promise((r) => setTimeout(r, 3000)); // Wait 5s for media to arrive first
-      await sendAndLog(
-        from,
-        `🌟 *Welcome to Sachetan Packaging*
+      try {
+        const [rows] = await mysqlPool.query("SELECT stage, user_type FROM tbl_chat_sessions WHERE phone = ? LIMIT 1", [from]);
+        if (rows.length) {
+          const dbStage = rows[0].stage || "menu";
+          const dbType = rows[0].user_type || null;
+          sessions[from] = { stage: dbStage };
+          if (dbType) sessions[from].userType = dbType;
+        } else {
+          sessions[from] = { stage: "menu" };
+        }
+      } catch {
+        sessions[from] = { stage: "menu" };
+      }
+      if (sessions[from].stage === "menu") {
+        const logoUrl = "https://sachetanpackaging.in/assets/uploads/logo.png";
+        await sendAndLog(from, "", { mediaUrl: logoUrl });
+        await new Promise((r) => setTimeout(r, 3000)); // Wait 5s for media to arrive first
+        await sendAndLog(
+          from,
+          `🌟 *Welcome to Sachetan Packaging*
 _Quality Packaging Solutions Since 2011_
 
 We are a premier organization engaged in manufacturing and supplying a wide assortment of:
@@ -527,10 +577,11 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
 *2️⃣ Custom Solutions* - Product Queries  
 *3️⃣ FAQ & Support* - Contact Us    
 
-        _Reply with a number to proceed._`,
-        { contentSid: process.env.TWILIO_CONTENT_SID_SERVICES }
-      );
-      return res.end();
+          _Reply with a number to proceed._`,
+          { contentSid: process.env.TWILIO_CONTENT_SID_SERVICES }
+        );
+        return res.end();
+      }
     }
 
     const session = sessions[from];
@@ -544,10 +595,13 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
       if (type) {
         session.userType = type;
         session.stage = "custom_solutions";
+        try {
+          await mysqlPool.query("INSERT INTO tbl_chat_sessions (phone, stage, user_type) VALUES (?, 'custom_solutions', ?) ON DUPLICATE KEY UPDATE stage='custom_solutions', user_type=VALUES(user_type), last_message_at=NOW()", [from, type]);
+        } catch {}
         await sendAndLog(from, `✅ You selected: *${type}*
 
 To help you better, please share:
-📦 Product (e.g., cake box, cake base, paper bag)  
+📦 Product (e.g., cake box, cake base, paper bag, laminated box, customized box, sweet packaging box)  
 📏 Size or usage (e.g., 1 kg cake)  
 🎨 Plain or printed design  
 🔢 Approximate quantity  
@@ -804,6 +858,12 @@ Reply with a number or option name.`
               !result.context // If no context found in strict mode
           )) {
              await sendAndLog(from, `I couldn't find specific information for *${session.userType}* regarding your query.
+
+However, our support team is ready to help you!
+
+📞 *Call us:* +91 92263 22231 / +91 84460 22231
+📧 *Email:* sagar9994@rediffmail.com
+🌐 *Website:* https://sachetanpackaging.in
 
 Would you like to search in another category?
 
@@ -1369,6 +1429,80 @@ Reply 'menu' to return.`,
     }
 
 
+    // --- Lead Capture Stages ---
+    if (session.stage === "custom_solutions_ask_name") {
+      if (
+        body === "menu" ||
+        body === "cancel" ||
+        body === "exit"
+      ) {
+        session.stage = "menu";
+        await sendAndLog(from, "Cancelled. Reply 'menu' to see options.");
+        return res.end();
+      }
+      
+      session.sales = session.sales || {};
+      session.sales.name = (req.body.Body || "").trim();
+      session.stage = "custom_solutions_ask_city";
+      await sendAndLog(from, "Thanks! Which city are you from?");
+      return res.end();
+    }
+
+    if (session.stage === "custom_solutions_ask_city") {
+      if (
+        body === "menu" ||
+        body === "cancel" ||
+        body === "exit"
+      ) {
+        session.stage = "menu";
+        await sendAndLog(from, "Cancelled. Reply 'menu' to see options.");
+        return res.end();
+      }
+
+      session.sales.city = (req.body.Body || "").trim();
+      session.stage = "custom_solutions_ask_pincode";
+      await sendAndLog(from, "Got it. And your Pincode?");
+      return res.end();
+    }
+
+    if (session.stage === "custom_solutions_ask_pincode") {
+      if (
+        body === "menu" ||
+        body === "cancel" ||
+        body === "exit"
+      ) {
+        session.stage = "menu";
+        await sendAndLog(from, "Cancelled. Reply 'menu' to see options.");
+        return res.end();
+      }
+
+      session.sales.pincode = (req.body.Body || "").trim();
+      session.stage = "custom_solutions";
+      
+      await sendAndLog(from, "✅ Thanks! We have updated your profile.\n\nHow else can I help you today?");
+      
+      // Log complete lead
+      try {
+        await logLead({
+            phone: from,
+            name: session.sales.name,
+            city: session.sales.city,
+            pincode: session.sales.pincode,
+            product: "Profile Update",
+            size: "",
+            paper: "",
+            quantity: "",
+            printing: "",
+            notes: "User provided full details via chat flow",
+            converted: true,
+          });
+      } catch (e) {
+          console.error("Error logging lead:", e);
+      }
+      return res.end();
+    }
+    // ---------------------------
+
     if (session.stage === "custom_solutions") {
       const question = (req.body.Body || "").trim();
       session.sales = session.sales || {
@@ -1505,8 +1639,13 @@ Reply with a number.`
 
         // Send media separately if available
         if (result.mediaUrls && result.mediaUrls.length > 0) {
+          session.sentMediaUrls = session.sentMediaUrls || new Set();
           for (const mediaUrl of result.mediaUrls) {
-            await sendAndLog(from, "", { mediaUrl });
+            const url = String(mediaUrl || "").trim();
+            if (url && !session.sentMediaUrls.has(url)) {
+              await sendAndLog(from, "", { mediaUrl: url });
+              session.sentMediaUrls.add(url);
+            }
           }
         }
 
@@ -1555,28 +1694,55 @@ Reply with a number.`
           });
           session.sales.leadLogged = true;
         }
-        if (
-          !session.sales.askedNameCity &&
-          (!session.sales.name || !session.sales.city)
-        ) {
-          session.sales.askedNameCity = true;
-          await sendAndLog(
-            from,
-            "May I know your name and city? For example: Rahul Pune or name: Rahul, city: Pune"
-          );
-        } else if (session.sales.askedNameCity) {
-          if (session.sales.name && !session.sales.city) {
+        // Suggest user type selection based on matched metadata if none selected
+        if (!session.userType) {
+          const types = (result.matches || [])
+            .map(m => (m.metadata && m.metadata.type) ? String(m.metadata.type) : "")
+            .filter(t => t && t.toLowerCase() !== "all");
+          const uniqueTypes = Array.from(new Set(types));
+          // Heuristic: if we have a dominant single type in matches, prompt selection
+          if (uniqueTypes.length === 1) {
+            const suggestedType = uniqueTypes[0];
+            session.stage = "select_user_type";
             await sendAndLog(
               from,
-              `Thanks, ${session.sales.name}! May I know your city?`
+              `I found relevant results under *${suggestedType}*.\n\nSelect your business type to get precise pricing and product details:`,
+              { contentSid: process.env.TWILIO_CONTENT_SID_USER_TYPE }
             );
-          } else if (!session.sales.name && session.sales.city) {
-            await sendAndLog(from, `Thanks! May I know your name?`);
-          } else if (!session.sales.name && !session.sales.city) {
+            return res.end();
+          }
+        }
+        // If user asked for MDF cake bases and current type likely mismatches, suggest switching
+        const mdfIntent = /mdf|cake\s*base|gold\s*base|board/i.test(question);
+        if (mdfIntent && session.userType && session.userType !== "Store Owner/ Bulk Buyer") {
+          const matchTypes = (result.matches || [])
+            .map(m => (m.metadata && m.metadata.type) ? String(m.metadata.type) : "")
+            .filter(Boolean);
+          const hasStoreOwnerData = matchTypes.includes("Store Owner/ Bulk Buyer");
+          if (hasStoreOwnerData || !result.context) {
+            session.stage = "select_user_type";
             await sendAndLog(
               from,
-              "May I know your name and city? For example: Rahul Pune or name: Rahul, city: Pune"
+              `This item is available in *Store Owner/ Bulk Buyer* catalog.\n\nSwitch your business type to view MDF cake base details and pricing:`,
+              { contentSid: process.env.TWILIO_CONTENT_SID_USER_TYPE }
             );
+            return res.end();
+          }
+        }
+        // Ask for details if missing
+        if (!session.sales.askedDetails) {
+          if (!session.sales.name) {
+            session.sales.askedDetails = true;
+            session.stage = "custom_solutions_ask_name";
+            await sendAndLog(from, "To serve you better, may I know your Full Name?");
+          } else if (!session.sales.city) {
+            session.sales.askedDetails = true;
+            session.stage = "custom_solutions_ask_city";
+            await sendAndLog(from, `Thanks ${session.sales.name}! Which city are you from?`);
+          } else if (!session.sales.pincode) {
+            session.sales.askedDetails = true;
+            session.stage = "custom_solutions_ask_pincode";
+            await sendAndLog(from, "Could you please share your Pincode for delivery check?");
           }
         }
         try {

@@ -82,6 +82,10 @@
           <span class="text-xl mr-3 group-hover:scale-110 transition">📚</span>
           <span class="font-semibold">Knowledge Base</span>
         </a>
+        <!-- <a href="#" onclick="showTab('leads')" id="nav-leads" class="nav-item flex items-center px-8 py-4 text-slate-600 hover:bg-slate-50 transition group">
+          <span class="text-xl mr-3 group-hover:scale-110 transition">🧾</span>
+          <span class="font-semibold">Leads</span>
+        </a> -->
         <a href="#" onclick="showTab('chat')" id="nav-chat" class="nav-item flex items-center px-8 py-4 text-slate-600 hover:bg-slate-50 transition group">
           <span class="text-xl mr-3 group-hover:scale-110 transition">💬</span>
           <span class="font-semibold">Chat History</span>
@@ -236,6 +240,44 @@
           </form>
         </div>
       </div>
+      
+      <!-- <div id="tab-leads" class="tab-content hidden max-w-7xl mx-auto">
+        <div class="mb-6 flex items-center justify-between">
+          <div>
+            <h2 class="text-3xl font-bold text-slate-900">Leads</h2>
+            <p class="text-slate-500 mt-1">Customer inquiries and conversions.</p>
+          </div>
+          <div class="flex gap-3">
+            <button id="leads-export" class="px-4 py-2 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 font-semibold">Export CSV</button>
+            <button id="leads-refresh" class="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 font-semibold">Refresh</button>
+          </div>
+        </div>
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="w-full text-left">
+              <thead>
+                <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs font-bold uppercase tracking-wider">
+                  <th class="p-5">Timestamp</th>
+                  <th class="p-5">Phone</th>
+                  <th class="p-5">Name</th>
+                  <th class="p-5">City</th>
+                  <th class="p-5">Pincode</th>
+                  <th class="p-5">Product</th>
+                  <th class="p-5">Quantity</th>
+                  <th class="p-5">Printing</th>
+                  <th class="p-5">Converted</th>
+                  <th class="p-5">Notes</th>
+                </tr>
+              </thead>
+              <tbody id="leads-table" class="divide-y divide-slate-100 text-slate-700 text-sm"></tbody>
+            </table>
+          </div>
+          <div id="leads-empty" class="hidden p-12 text-center text-slate-400">
+            <div class="text-4xl mb-3">📭</div>
+            <p>No leads found.</p>
+          </div>
+        </div>
+      </div> -->
 
       <!-- List Tab -->
       <div id="tab-list" class="tab-content hidden max-w-6xl mx-auto">
@@ -311,9 +353,10 @@
                 <h3 id="chat-active-user" class="font-bold text-slate-800 text-lg">Select a conversation</h3>
                 <p id="chat-active-time" class="text-xs text-slate-500"></p>
               </div>
-              <button onclick="loadChatHistory(currentChatPhone)" class="text-slate-400 hover:text-blue-600 transition">
-                🔄
-              </button>
+              <div class="flex items-center gap-2">
+                <button id="manual-toggle" onclick="toggleManual()" class="px-3 py-1.5 rounded-lg text-sm font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200">Enable Manual</button>
+                <button onclick="loadChatHistory(currentChatPhone)" class="text-slate-400 hover:text-blue-600 transition">🔄</button>
+              </div>
             </div>
 
             <!-- Messages Container -->
@@ -324,6 +367,17 @@
                </div>
             </div>
 
+            <div id="chat-input-bar" class="p-4 bg-white border-t border-slate-200 hidden">
+              <div class="flex items-center gap-3">
+                <input type="text" id="admin-message" class="flex-1 px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" placeholder="Type a message...">
+                <label class="cursor-pointer flex items-center gap-2 px-4 py-2 border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-600 text-sm transition" title="Upload Files">
+                    <span>📎</span>
+                    <span id="file-name-display" class="max-w-[150px] truncate hidden"></span>
+                    <input type="file" id="admin-media-file" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" multiple class="hidden" onchange="updateFileName(this)">
+                </label>
+                <button onclick="sendAdminMessage()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-semibold">Send</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -374,8 +428,21 @@
   <script>
     const API_BASE = "/api/admin/ai";
     const AUTH_URL = "/api/auth/login";
+    const ADMIN_BASE = "/api/admin";
 
     // --- AUTH ---
+    const originalFetch = window.fetch;
+    window.fetch = async (url, options) => {
+      const res = await originalFetch(url, options);
+      if (res.status === 401) {
+        localStorage.removeItem("admin_token");
+        Swal.fire({ icon: 'warning', title: 'Session expired', text: 'Please login again.' }).then(() => {
+          checkAuth();
+        });
+        throw new Error("Unauthorized");
+      }
+      return res;
+    };
     function checkAuth() {
       const token = localStorage.getItem("admin_token");
       if (token) {
@@ -427,6 +494,7 @@
 
       if (tabName === 'list') loadDocuments();
       if (tabName === 'chat') loadChatUsers();
+      if (tabName === 'leads') loadLeads();
     }
 
     // --- HELPERS ---
@@ -449,6 +517,76 @@
       }
     }
 
+    let leadsData = [];
+    async function loadLeads() {
+      const tbody = document.getElementById("leads-table");
+      const empty = document.getElementById("leads-empty");
+      if (!tbody) return;
+      tbody.innerHTML = '<tr><td colspan="10" class="p-8 text-center text-slate-400">Loading leads...</td></tr>';
+      try {
+        const token = localStorage.getItem("admin_token");
+        const res = await fetch(`${ADMIN_BASE}/leads`, { headers: { "Authorization": `Bearer ${token}` } });
+        const data = await res.json();
+        if (res.ok) {
+          leadsData = data.leads || [];
+          renderLeads();
+        } else {
+          tbody.innerHTML = '<tr><td colspan="10" class="p-8 text-center text-red-400">Failed to load leads.</td></tr>';
+        }
+      } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="10" class="p-8 text-center text-red-400">Network error.</td></tr>';
+      }
+    }
+    function renderLeads() {
+      const tbody = document.getElementById("leads-table");
+      const empty = document.getElementById("leads-empty");
+      if (!tbody) return;
+      if (!leadsData.length) {
+        tbody.innerHTML = "";
+        if (empty) empty.classList.remove("hidden");
+        return;
+      }
+      if (empty) empty.classList.add("hidden");
+      tbody.innerHTML = leadsData.map(l => {
+        const ts = l.Timestamp || "";
+        const ph = l.Phone || "";
+        const nm = l.Name || "";
+        const ct = l.City || "";
+        const pin = l.Pincode || "";
+        const prod = l.Product || "";
+        const qty = l.Quantity || "";
+        const prt = l.Printing || "";
+        const conv = l.Converted || "";
+        const notes = l.Notes || "";
+        return `
+        <tr>
+          <td class="p-5">${ts}</td>
+          <td class="p-5 font-mono">${ph}</td>
+          <td class="p-5">${nm}</td>
+          <td class="p-5">${ct}</td>
+          <td class="p-5">${pin}</td>
+          <td class="p-5">${prod}</td>
+          <td class="p-5">${qty}</td>
+          <td class="p-5">${prt}</td>
+          <td class="p-5">${conv}</td>
+          <td class="p-5">${notes}</td>
+        </tr>`;
+      }).join("");
+    }
+    document.getElementById("leads-refresh")?.addEventListener("click", loadLeads);
+    document.getElementById("leads-export")?.addEventListener("click", async () => {
+      const token = localStorage.getItem("admin_token");
+      const res = await fetch(`${ADMIN_BASE}/leads/export`, { headers: { "Authorization": `Bearer ${token}` } });
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "leads.csv";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    });
     // --- UPLOAD ---
     document.getElementById("file-input").addEventListener("change", (e) => {
       const fileName = e.target.files[0]?.name || "Click to upload file";
@@ -496,6 +634,7 @@
     // --- CHAT HISTORY ---
     let allChatUsers = [];
     let currentChatPhone = null;
+    let manualEnabled = false;
 
     async function loadChatUsers() {
       try {
@@ -616,6 +755,9 @@
         // Scroll to bottom
         container.scrollTop = container.scrollHeight;
         document.getElementById("chat-active-time").textContent = "Last updated: " + new Date().toLocaleTimeString();
+        const user = allChatUsers.find(u => u.phone === phone);
+        manualEnabled = user && user.stage === 'manual';
+        updateManualUI();
 
       } catch (err) {
         console.error("Failed to load chat history:", err);
@@ -628,6 +770,100 @@
         return text.replace(urlRegex, function(url) {
             return '<a href="' + url + '" target="_blank" class="underline decoration-dotted hover:text-blue-300">' + url + '</a>';
         });
+    }
+
+    async function toggleManual() {
+      if (!currentChatPhone) return;
+      const token = localStorage.getItem("admin_token");
+      const url = `${API_BASE}/chat/manual/${manualEnabled ? 'stop' : 'start'}`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify({ phone: currentChatPhone })
+      });
+      if (res.ok) {
+        manualEnabled = !manualEnabled;
+        updateManualUI();
+        await loadChatUsers();
+      }
+    }
+
+    function updateManualUI() {
+      const btn = document.getElementById("manual-toggle");
+      const bar = document.getElementById("chat-input-bar");
+      if (!btn || !bar) return;
+      btn.textContent = manualEnabled ? "Disable Manual" : "Enable Manual";
+      if (manualEnabled) {
+        bar.classList.remove("hidden");
+      } else {
+        bar.classList.add("hidden");
+      }
+    }
+
+    function updateFileName(input) {
+      const display = document.getElementById("file-name-display");
+      if (input.files && input.files.length > 0) {
+        if (input.files.length === 1) {
+            display.textContent = input.files[0].name;
+        } else {
+            display.textContent = `${input.files.length} files`;
+        }
+        display.classList.remove("hidden");
+      } else {
+        display.textContent = "";
+        display.classList.add("hidden");
+      }
+    }
+
+    async function sendAdminMessage() {
+      if (!currentChatPhone || !manualEnabled) return;
+      const msgInput = document.getElementById("admin-message");
+      const fileInput = document.getElementById("admin-media-file");
+      
+      const msg = msgInput.value.trim();
+      const files = fileInput.files;
+
+      if (!msg && files.length === 0) return;
+
+      const formData = new FormData();
+      formData.append("phone", currentChatPhone);
+      formData.append("message", msg);
+      
+      for (let i = 0; i < files.length; i++) {
+        formData.append("files", files[i]);
+      }
+
+      const token = localStorage.getItem("admin_token");
+      
+      // Show loading state if needed (optional)
+      const btn = document.querySelector("#chat-input-bar button");
+      const originalText = btn.textContent;
+      btn.textContent = "Sending...";
+      btn.disabled = true;
+
+      try {
+        const res = await fetch(`${API_BASE}/chat/send`, {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${token}` }, // Do NOT set Content-Type for FormData
+            body: formData
+        });
+        
+        if (res.ok) {
+            msgInput.value = "";
+            fileInput.value = ""; // Reset file input
+            updateFileName(fileInput); // Reset display
+            await loadChatHistory(currentChatPhone);
+        } else {
+            const data = await res.json();
+            Swal.fire("Error", data.error || "Failed to send message", "error");
+        }
+      } catch (err) {
+        console.error(err);
+        Swal.fire("Error", "Network error", "error");
+      } finally {
+        btn.textContent = originalText;
+        btn.disabled = false;
+      }
     }
 
     // --- PRODUCT ---

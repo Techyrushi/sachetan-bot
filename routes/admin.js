@@ -11,7 +11,7 @@ const path = require("path");
  
 const { upsertDocuments, queryRag, ensureCollection, pingChroma, testOpenRouter, getChromaUrl } = require("../utils/rag");
 const { scrapeUrl, chunkText } = require("../utils/scraper");
-const { logConversation, logLead, listSheets } = require("../utils/sheets");
+const { logConversation, logLead, listSheets, listLeads } = require("../utils/sheets");
 const mysqlPool = require("../config/mysql");
 const allowedTables = new Set([
   "tbl_product",
@@ -545,6 +545,37 @@ router.get("/sheets/list", async (req, res) => {
 router.get("/orders", async (req, res) => {
   const orders = await Order.find().sort({ createdAt: -1 });
   res.json(orders);
+});
+
+router.get("/leads", async (req, res) => {
+  try {
+    const leads = await listLeads();
+    res.json({ count: leads.length, leads });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get("/leads/export", async (req, res) => {
+  try {
+    const leads = await listLeads();
+    if (!leads.length) {
+      res.setHeader("Content-Type", "text/csv");
+      return res.send("No leads");
+    }
+    const headers = Object.keys(leads[0]);
+    const lines = [headers.join(",")];
+    for (const l of leads) {
+      const row = headers.map(h => String(l[h]).replace(/"/g, '""'));
+      lines.push(row.map(v => `"${v}"`).join(","));
+    }
+    const csv = lines.join("\n");
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", "attachment; filename=leads.csv");
+    res.send(csv);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Import from SQL dump (categories, products, documents)

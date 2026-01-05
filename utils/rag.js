@@ -7,15 +7,38 @@ const axios = require("axios");
 const DEFAULT_COLLECTION = "website_docs";
 const PINECONE_INDEX = process.env.PINECONE_INDEX || "sachetan-index";
 
-let openai = null;
+// Initialize OpenAI Clients (Primary & Fallback)
+const clients = [];
+
+// Primary Client
 if (process.env.OPENROUTER_API_KEY) {
-  openai = new OpenAI({
-    baseURL: "https://openrouter.ai/api/v1",
-    apiKey: process.env.OPENROUTER_API_KEY,
-    defaultHeaders: {
-      "HTTP-Referer": process.env.SITE_URL || "https://sachetanpackaging.in",
-      "X-Title": process.env.SITE_NAME || "SachetanAI",
-    },
+  clients.push({
+    name: "Primary (OPENROUTER)",
+    client: new OpenAI({
+      baseURL: "https://openrouter.ai/api/v1",
+      apiKey: process.env.OPENROUTER_API_KEY,
+      defaultHeaders: {
+        "HTTP-Referer": process.env.SITE_URL || "https://sachetanpackaging.in",
+        "X-Title": process.env.SITE_NAME || "SachetanAI",
+      },
+    }),
+    model: process.env.OPENROUTER_MODEL || "deepseek/deepseek-r1-0528:free"
+  });
+}
+
+// Secondary Client (Fallback)
+if (process.env.OPENROUTERS_API_KEY) {
+  clients.push({
+    name: "Secondary (OPENROUTERS)",
+    client: new OpenAI({
+      baseURL: "https://openrouter.ai/api/v1",
+      apiKey: process.env.OPENROUTERS_API_KEY,
+      defaultHeaders: {
+        "HTTP-Referer": process.env.SITE_URL || "https://sachetanpackaging.in",
+        "X-Title": process.env.SITE_NAME || "SachetanAI",
+      },
+    }),
+    model: process.env.OPENROUTERS_MODEL || "tngtech/deepseek-r1t2-chimera:free"
   });
 }
 
@@ -61,29 +84,29 @@ function httpRequest(method, endpoint, data, headers = {}) {
 }
 
 async function embedText(text) {
-  try {
-    if (openai) {
-      const response = await openai.embeddings.create({
+  // Try all clients
+  for (const { client, name } of clients) {
+    try {
+      const response = await client.embeddings.create({
         model: "text-embedding-3-small",
         input: text,
       });
       return response.data[0].embedding;
+    } catch (error) {
+      console.warn(`Embedding failed with ${name}:`, error.message);
     }
-    throw new Error("No OpenAI client");
-  } catch (error) {
-    console.warn("Embedding fallback used (quality may be low)");
-    // Fallback: create a 1536-dim vector (approx) to match OpenAI
-    // Realistically this fallback is useless for semantic search against OpenAI vectors
-    // but prevents crashing.
-    const arr = new Array(1536).fill(0); 
-    const s = String(text || "");
-    for (let i = 0; i < s.length; i++) {
-      const idx = i % 1536;
-      arr[idx] += s.charCodeAt(i);
-    }
-    const norm = Math.sqrt(arr.reduce((a, b) => a + b * b, 0)) || 1;
-    return arr.map((v) => v / norm);
   }
+
+  // If all fail, use manual fallback
+  console.warn("All embedding clients failed. Using manual fallback (quality may be low).");
+  const arr = new Array(1536).fill(0); 
+  const s = String(text || "");
+  for (let i = 0; i < s.length; i++) {
+    const idx = i % 1536;
+    arr[idx] += s.charCodeAt(i);
+  }
+  const norm = Math.sqrt(arr.reduce((a, b) => a + b * b, 0)) || 1;
+  return arr.map((v) => v / norm);
 }
 
 let INDEX_DIMENSION_CACHE = null;
@@ -270,10 +293,10 @@ async function queryRag(query, topK = 4, collectionName = DEFAULT_COLLECTION, fi
 }
 
 async function generateAnswer(prompt, context) {
-  try {
-    if (openai) {
-      const completion = await openai.chat.completions.create({
-        model: process.env.OPENROUTER_MODEL || "deepseek/deepseek-r1-0528:free",
+  for (const { client, model, name } of clients) {
+    try {
+      const completion = await client.chat.completions.create({
+        model: model,
         messages: [
           { role: "system", content: `You are a professional sales executive for a packaging manufacturing company (Sachetan Packaging).
 You sell boxes, bases, paper bags, and customized printed packaging via WhatsApp.
@@ -318,7 +341,7 @@ Collect step-by-step (ask only missing items):
 3) Paper type (suggest if unknown)
 4) Quantity
 5) Design availability (customer-provided or not)
-Accepted design formats: PDF, AI, CDR.
+Accepted design formats: PNG, JPG, PDF, AI, CDR.
 
 PRICE & QUOTATION RULES:
 - Never give final price without quantity.
@@ -340,13 +363,12 @@ Multiple questions: answer clearly in points.
         ],
       });
       return completion.choices[0].message.content;
+    } catch (error) {
+      console.warn(`Generation failed with ${name}:`, error.message);
+      // Continue to next client
     }
-    const snippet = String(context || "").split("\n").slice(0, 3).join("\n");
-    return snippet || "Assistant unavailable.";
-  } catch (error) {
-    console.error("Generation error:", error.message);
-    return "Sorry, I am unable to answer that right now.";
   }
+  return "Sorry, I am unable to answer that right now.";
 }
 
 module.exports = {
@@ -364,33 +386,20 @@ module.exports = {
      }
   },
   testOpenRouter: async () => {
-    try {
-      const key = process.env.OPENROUTER_API_KEY;
-      if (!key) return false;
-      const models = await httpRequest(
-        "GET",
-        "https://openrouter.ai/api/v1/models",
-        null,
-        {
-          Authorization: `Bearer ${key}`,
-          "HTTP-Referer": process.env.SITE_URL || "https://sachetanpackaging.in",
-          "X-Title": process.env.SITE_NAME || "SachetanAI",
-        }
-      );
-      if (models && Array.isArray(models.data) && models.data.length > 0) return true;
-    } catch {}
-    try {
-      if (!openai) return false;
-      const model = process.env.OPENROUTER_MODEL || "deepseek/deepseek-r1-0528:free";
-      const completion = await openai.chat.completions.create({
-        model,
-        messages: [{ role: "user", content: "ping" }],
-      });
-      const content = completion?.choices?.[0]?.message?.content;
-      return typeof content === "string" && content.length > 0;
-    } catch {
-      return false;
+    if (clients.length === 0) return false;
+    
+    // Try pinging with any available client
+    for (const { client, model } of clients) {
+      try {
+        const completion = await client.chat.completions.create({
+          model,
+          messages: [{ role: "user", content: "ping" }],
+        });
+        const content = completion?.choices?.[0]?.message?.content;
+        if (typeof content === "string" && content.length > 0) return true;
+      } catch {}
     }
+    return false;
   },
   getChromaUrl: () => "https://api.pinecone.io",
   deleteDocument: async (docId, collectionName = DEFAULT_COLLECTION) => {

@@ -2,14 +2,10 @@ const cron = require("node-cron");
 const Booking = require("../models/Booking");
 const sendWhatsApp = require("./sendWhatsApp");
 const mysqlPool = require("../config/mysql");
-const { upsertDocuments, resetIndex } = require("./rag");
+const { upsertDocuments } = require("./rag");
 
-async function syncProducts(reset = false) {
+async function syncProducts() {
   try {
-    if (reset) {
-      await resetIndex();
-    }
-
     console.log("Starting product sync...");
     const [products] = await mysqlPool.query(`
       SELECT 
@@ -75,8 +71,9 @@ async function syncProducts(reset = false) {
 
 function startCronJobs() {
   // Run product sync immediately on startup (Reset + Add)
-  // This satisfies "freshly we add data"
-  syncProducts(true);
+  // Incremental: do not reset Pinecone; only upsert/append new data
+  console.log("Initializing incremental Pinecone sync (no reset)...");
+  syncProducts();
 
   // run every 15 minutes
   cron.schedule("*/15 * * * *", async () => {
@@ -177,8 +174,8 @@ Please arrive 10 minutes early for check-in.`);
         await upsertDocuments(docs);
       }
       
-      // Sync Products (New Logic - Incremental)
-      await syncProducts(false); // reset=false for incremental updates
+      // Sync Products (Incremental - no reset)
+      await syncProducts();
 
     } catch (e) {
       console.error("RAG cron error:", e.message);
