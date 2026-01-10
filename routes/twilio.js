@@ -94,6 +94,16 @@ async function ensureSessionTable() {
         INDEX idx_created_at (created_at)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
+
+    // Add context column for AI state
+    try {
+      await mysqlPool.query(`
+        ALTER TABLE tbl_chat_sessions
+        ADD COLUMN context TEXT NULL
+      `);
+    } catch (e) {
+      // Ignore if column already exists
+    }
   } catch (err) {
     console.error("Session table error:", err);
   }
@@ -383,10 +393,27 @@ function createPaymentLink(bookingId) {
   return `${baseUrl}/payment?booking=${bookingId}`;
 }
 
+const rateLimit = new Map(); // phone -> [timestamps]
+
 router.post("/", async (req, res) => {
   try {
     const from = req.body.From;
     const body = (req.body.Body || "").trim().toLowerCase();
+    
+    // 0. Rate Limiting (10 msgs per 60s)
+    const now = Date.now();
+    if (!rateLimit.has(from)) rateLimit.set(from, []);
+    const timestamps = rateLimit.get(from);
+    // Remove timestamps older than 60s
+    while (timestamps.length > 0 && now - timestamps[0] > 60000) {
+      timestamps.shift();
+    }
+    timestamps.push(now);
+    if (timestamps.length > 10) {
+      await sendWhatsApp(from, "⚠️ You are sending messages too quickly.\nPlease wait a few seconds so I can assist you properly 🙂");
+      return res.end();
+    }
+
     const numMedia = parseInt(req.body.NumMedia || 0);
 
     // 1. Log incoming text if present (Always log user message first)
@@ -465,15 +492,42 @@ router.post("/", async (req, res) => {
     router.sessions = router.sessions || {};
     const sessions = router.sessions;
 
+    // 1. Load Session from DB if not in memory
+    if (!sessions[from]) {
+      try {
+        const [rows] = await mysqlPool.query("SELECT stage, user_type, context FROM tbl_chat_sessions WHERE phone = ? LIMIT 1", [from]);
+        if (rows.length) {
+          const dbStage = rows[0].stage || "menu";
+          const dbType = rows[0].user_type || null;
+          let dbContext = {};
+          try {
+            if (rows[0].context) dbContext = JSON.parse(rows[0].context);
+          } catch (e) {}
+
+          sessions[from] = { stage: dbStage, context: dbContext };
+          if (dbType) sessions[from].userType = dbType;
+        } else {
+          sessions[from] = { stage: "menu", context: {} };
+        }
+      } catch {
+        sessions[from] = { stage: "menu", context: {} };
+      }
+    }
+
+    const session = sessions[from];
+
     // Define keyword lists
     const greetingKeywords = [
-      "hi", "hello", "hey", "hii", "hiii", "hola",
+      "hi", "hello", "hey", "hii", "hiii", "hola", "namaste", "namaskar",
       "start", "begin", "restart",
-      "good morning", "good evening", "good night"
+      "good morning", "good evening", "good night",
+      "hi bot", "hello bot", "hi sachetan", "hello sachetan",
+      "i want", "i need", "interested", "details", "inquiry", "enquiry",
+      "saw this on facebook", "saw this on instagram", "fb ad", "insta ad", "ad"
     ];
 
     const menuKeywords = [
-      "menu", "main menu", "back", "home", "exit", "end", "stop", "reset",
+      "menu", "main menu", "back", "home", "exit", "end", "stop", "reset", "quit", "abort", "leave",
       "thanks", "thank you", "thankyou", "thx", "ty", "thank u",
       "ok", "okay", "cool", "done", "confirmed",
       "yes", "yep", "yo",
@@ -481,18 +535,29 @@ router.post("/", async (req, res) => {
       "go to menu", "Go to Menu" // Added explicit match for "Go to Menu" button text
     ];
 
-    const isGreeting = greetingKeywords.includes(body) || body.includes("hi") && body.length < 5; // Simple heuristic for "Hi there" etc.
+    let isGreeting = greetingKeywords.some(k => body.startsWith(k)) || (body.includes("hi") && body.length < 10) || (body.includes("hello") && body.length < 10);
     const isMenu = menuKeywords.includes(body);
 
+    // INTELLIGENT EXCEPTION:
+    // If user says "I want..." but is already in 'custom_solutions', treat it as data, not a reset.
+    if (session.stage === 'custom_solutions') {
+        if (body.startsWith("i want") || body.startsWith("i need") || body.startsWith("interested")) {
+            isGreeting = false;
+        }
+    }
+
     if (isGreeting || isMenu) {
-      delete sessions[from];
-      sessions[from] = { stage: "menu" };
+      // Reset Session
+      session.stage = "menu";
+      session.context = {}; // Clear context on full reset? Or keep it? "Menu" usually implies fresh start.
       
+      await mysqlPool.query("INSERT INTO tbl_chat_sessions (phone, stage, context) VALUES (?, 'menu', '{}') ON DUPLICATE KEY UPDATE stage = 'menu', last_message_at = NOW()", [from]);
+
       // Only send logo and full welcome for greetings (not for menu/back)
       if (isGreeting) {
-        const logoUrl = "https://sachetanpackaging.in/assets/uploads/logo.png";
+        const logoUrl = "https://sachetanpackaging.in/assets/uploads/sachetan_logos.png";
         await sendAndLog(from, "", { mediaUrl: logoUrl });
-        await new Promise((r) => setTimeout(r, 3000)); // Wait 3s for media
+        await new Promise((r) => setTimeout(r, 2000)); // Wait 2s for media
       }
 
       await sendAndLog(
@@ -521,55 +586,6 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
       );
       return res.end();
     }
-
-    if (!sessions[from]) {
-      try {
-        const [rows] = await mysqlPool.query("SELECT stage, user_type FROM tbl_chat_sessions WHERE phone = ? LIMIT 1", [from]);
-        if (rows.length) {
-          const dbStage = rows[0].stage || "menu";
-          const dbType = rows[0].user_type || null;
-          sessions[from] = { stage: dbStage };
-          if (dbType) sessions[from].userType = dbType;
-        } else {
-          sessions[from] = { stage: "menu" };
-        }
-      } catch {
-        sessions[from] = { stage: "menu" };
-      }
-      if (sessions[from].stage === "menu") {
-        const logoUrl = "https://sachetanpackaging.in/assets/uploads/logo.png";
-        await sendAndLog(from, "", { mediaUrl: logoUrl });
-        await new Promise((r) => setTimeout(r, 3000)); // Wait 5s for media to arrive first
-        await sendAndLog(
-          from,
-          `🌟 *Welcome to Sachetan Packaging*
-_Quality Packaging Solutions Since 2011_
-
-We are a premier organization engaged in manufacturing and supplying a wide assortment of:
-🎂 *Cake & Brownie Boxes*
-🍰 *Pastry Boxes*
-🧁 *Cup Cake Boxes*
-🥡 *Laminated Boxes & Bases*
-📦 *Customized Boxes & Bases*
-
-🌐 *Visit us:* https://sachetanpackaging.in
-
-──────────────────
-
-👇 *Please select a service:*
-
-*1️⃣ Buy Products* - Browse catalog & order
-*2️⃣ Custom Solutions* - Product Queries  
-*3️⃣ FAQ & Support* - Contact Us    
-
-          _Reply with a number to proceed._`,
-          { contentSid: process.env.TWILIO_CONTENT_SID_SERVICES }
-        );
-        return res.end();
-      }
-    }
-
-    const session = sessions[from];
 
     if (session.stage === "select_user_type") {
       let type = "";
@@ -610,6 +626,259 @@ _Reply with a number to proceed._`,
           { contentSid: process.env.TWILIO_CONTENT_SID_USER_TYPE }
         );
       }
+      return res.end();
+    }
+
+    if (session.stage === "custom_solutions") {
+      let queryText = body;
+      const currentContext = session.context || {};
+      
+      // 1. Lead Collection (Name & City)
+      if (!currentContext.name || !currentContext.city) {
+        // If we already asked, this message is the answer
+        if (currentContext.askingForDetails) {
+             let name = body;
+             let city = "Unknown";
+             const cleanBody = body.replace(/my name is/i, "").replace(/i am/i, "").trim();
+             
+             if (cleanBody.includes(",")) {
+                 const parts = cleanBody.split(",");
+                 name = parts[0].trim();
+                 city = parts.slice(1).join(" ").trim();
+             } else if (cleanBody.toLowerCase().includes(" from ")) {
+                 const parts = cleanBody.toLowerCase().split(" from ");
+                 name = parts[0].trim();
+                 city = parts[1].trim();
+             } else {
+                 name = cleanBody; 
+             }
+             
+             // Capitalize
+             name = name.replace(/\b\w/g, l => l.toUpperCase());
+             city = city.replace(/\b\w/g, l => l.toUpperCase());
+
+             currentContext.name = name;
+             currentContext.city = city;
+             delete currentContext.askingForDetails;
+             
+             const originalQuery = currentContext.pendingQuery || "";
+             delete currentContext.pendingQuery;
+
+             // Log Lead
+             await logLead({
+                 phone: from,
+                 name: name,
+                 city: city,
+                 converted: false
+             });
+             
+             await sendAndLog(from, `Thanks ${name.split(' ')[0]}! 😊`);
+             
+             if (originalQuery) {
+                 queryText = originalQuery; // Use the original question for AI
+             } else {
+                 await sendAndLog(from, "What product are you looking for today? 📦");
+                 session.context = currentContext;
+                 await mysqlPool.query("UPDATE tbl_chat_sessions SET context = ?, last_message_at = NOW() WHERE phone = ?", [JSON.stringify(currentContext), from]);
+                 return res.end();
+             }
+        } else {
+             // First time asking
+             currentContext.askingForDetails = true;
+             currentContext.pendingQuery = body; // Save current message
+             
+             session.context = currentContext;
+             await mysqlPool.query("UPDATE tbl_chat_sessions SET context = ?, last_message_at = NOW() WHERE phone = ?", [JSON.stringify(currentContext), from]);
+             
+             await sendAndLog(from, "To generate a proper quotation, could you please share your **Full Name and City**? 🏙️\n\n_Example: Rahul Patil, Nashik_");
+             return res.end();
+        }
+      }
+
+      // 2. Prepare Prompt
+      const contextString = JSON.stringify(currentContext, null, 2);
+      
+      const systemPrompt = `You are a trained packaging sales executive for Sachetan Packaging.
+Your job is to Convert WhatsApp conversations into accurate quotations and real orders.
+
+STRICT SCOPE & DATA RULE:
+You are assisting a "${session.userType}".
+You must ONLY answer questions based on the provided Context Data for this user type.
+If the user asks about something completely unrelated to packaging or this business type (e.g. "Sell me a car", "recipe for cake"), you must politely refuse and steer them back to packaging.
+If the user wants to restart or exit, guide them to type "menu".
+
+HUMAN-LIKE PERSONA:
+- Be polite, friendly, and professional.
+- Use emojis naturally 🎂📦✨.
+- Auto-correct typos (e.g. "kek box" -> "Cake Box").
+- Do NOT mention "AI", "Bot", or "Database".
+- If you don't understand, ask clarifying questions like a human would ("Sorry, did you mean...?", "Could you please specify...?")
+
+IMAGE HANDLING:
+You have access to a list of "Image Option: filename | URL: url".
+If the user asks for a specific design (e.g. "one piece"), scan the filenames of the available images.
+If a filename contains the requested keyword (e.g. "one_piece" matches "one piece"), include that specific image using [MEDIA:URL].
+Example: User asks "show me one piece", you find "Image Option: one_piece_box.jpg | URL: ...", so you reply "Here is the One Piece Box. [MEDIA:https://.../one_piece_box.jpg]"
+If no specific filename matches, you can still show a relevant generic image from the list.
+ONLY use images explicitly provided in the context.
+
+For every user, continuously store:
+Product name
+Size
+Printing (plain / printed)
+Material (if given)
+Quantity
+Previous selections
+
+When the user says:
+price, rate, total, how much, quotation, amount
+
+You must use the last stored values and calculate automatically.
+If any field is missing, ask only for the missing field do not reset the conversation.
+
+🧠 Smart Language & Auto-Correction
+You must understand: English, Hindi, Marathi, Hinglish, Typos, Spoken language.
+Never say “I don’t understand” — infer intent.
+
+🧾 Professional Quotation Format
+Whenever user asks price, you must respond in this exact format:
+
+📄 Quotation – Sachetan Packaging
+Product: {Product Name}
+Size: {Size}
+Material: {Material or Standard Food Grade}
+Print: {Plain / Printed}
+Quantity: {Qty}
+
+Rate: ₹{rate per piece}
+Subtotal: ₹{qty × rate}
+GST (5%): ₹{gst}
+--------------------------------
+Total Payable: ₹{final amount}
+
+🚚 Transport: Extra (as per location)
+📍 Dispatch: Nashik
+⏳ Production Time: 5–7 working days
+
+📞 Support: +91 92263 22231 / +91 84460 22231
+📧 Email: sagar9994@rediffmail.com
+🌐 More Products: https://sachetanpackaging.in
+
+❓ Would you like to confirm this order? (Yes/No)
+
+🧮 4️⃣ Calculation Rules
+Always:
+1. Multiply quantity × rate = Subtotal
+2. GST = Subtotal × 0.05
+3. Total = Subtotal + GST
+4. Round Total to nearest rupee
+Never guess quantity.
+Never skip GST.
+If user changes quantity, recalculate instantly.
+If the calculation seems wrong, double-check it before replying.
+
+STATE MANAGEMENT:
+You must extract the current Order Context from the conversation.
+At the END of your response, you MUST output the updated context in a JSON block like this:
+<CONTEXT_JSON>
+{
+  "product": "...",
+  "size": "...",
+  "printing": "...",
+  "material": "...",
+  "quantity": "..."
+}
+</CONTEXT_JSON>
+Only update fields that are present or changed. Keep others as is.
+Current Context: ${contextString}
+`;
+
+      try {
+        // 3. Query RAG (Search for product info/rates)
+        // We use the user's message + current product context to find relevant rates
+        const searchTerms = queryText + " " + (currentContext.product || "");
+        
+        // FILTER BY USER TYPE
+        const filter = session.userType ? { type: session.userType } : {};
+        
+        const ragResponse = await queryRag(searchTerms, 3, "website_docs", filter, false, systemPrompt);
+        
+        let reply = ragResponse.answer;
+        let newContext = currentContext;
+
+        // 4. Extract JSON Context
+        const jsonMatch = reply.match(/<CONTEXT_JSON>([\s\S]*?)<\/CONTEXT_JSON>/);
+        if (jsonMatch) {
+          try {
+            const extractedContext = JSON.parse(jsonMatch[1]);
+            newContext = { ...currentContext, ...extractedContext };
+            
+            // Log Lead Update if Product/Qty changes
+            if (newContext.product !== currentContext.product || newContext.quantity !== currentContext.quantity) {
+                 await logLead({
+                     phone: from,
+                     product: newContext.product,
+                     size: newContext.size,
+                     quantity: newContext.quantity,
+                     printing: newContext.printing,
+                     notes: "In Discussion",
+                     converted: false
+                 });
+            }
+
+            // Remove the JSON block from the reply sent to user
+            reply = reply.replace(/<CONTEXT_JSON>([\s\S]*?)<\/CONTEXT_JSON>/, "").trim();
+          } catch (e) {
+            console.error("Failed to parse context JSON from LLM:", e);
+          }
+        }
+
+        // 5. Send Response
+        // Use sendSplitMessage to handle long quotations safely
+        await sendSplitMessage(from, reply);
+        if (ragResponse.mediaUrls && ragResponse.mediaUrls.length > 0) {
+            // Send first media if available
+             await sendAndLog(from, "", { mediaUrl: ragResponse.mediaUrls[0] });
+        }
+
+        // 6. Admin Notification for Quotation
+        if (reply.includes("📄 Quotation – Sachetan Packaging")) {
+             const adminNumbers = (process.env.ADMIN_WHATSAPP || "").split(",").map(n => n.trim()).filter(Boolean);
+             if (adminNumbers.length > 0) {
+                 const alertMsg = `📢 *New Quotation Generated!*
+                 
+👤 *Customer:* ${currentContext.name || "Unknown"}
+📞 *Phone:* ${from}
+🏙️ *City:* ${currentContext.city || "Unknown"}
+
+${reply}
+
+_Please follow up with this lead._`;
+                 
+                 for (const adminNum of adminNumbers) {
+                     // Ensure admin number has whatsapp: prefix if not present (assuming env might just be numbers)
+                     // But sendWhatsApp handles standard numbers if formatted correctly or we assume 'whatsapp:' is needed for Twilio
+                     // sendWhatsApp helper usually expects the full ID like 'whatsapp:+91...'
+                     // Let's assume env vars are just numbers like '+9198...' and we prefix.
+                     // Or better, let's assume they are full IDs or just try to format.
+                     // To be safe, let's check prefix.
+                     let target = adminNum;
+                     if (!target.startsWith("whatsapp:")) target = "whatsapp:" + target;
+                     
+                     await sendAndLog(target, alertMsg);
+                 }
+             }
+        }
+
+        // 7. Update DB
+        session.context = newContext;
+        await mysqlPool.query("UPDATE tbl_chat_sessions SET context = ?, last_message_at = NOW() WHERE phone = ?", [JSON.stringify(newContext), from]);
+
+      } catch (err) {
+        console.error("Error in custom_solutions AI:", err);
+        await sendAndLog(from, "I'm having a bit of trouble connecting to my brain right now. 🧠\nPlease try again in a moment!");
+      }
+
       return res.end();
     }
 

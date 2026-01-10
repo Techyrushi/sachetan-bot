@@ -74,6 +74,10 @@
           <span class="text-xl mr-3 group-hover:scale-110 transition">🛍️</span>
           <span class="font-semibold">Add Product</span>
         </a>
+        <a href="#" onclick="showTab('bulk')" id="nav-bulk" class="nav-item flex items-center px-8 py-4 text-slate-600 hover:bg-slate-50 transition group">
+          <span class="text-xl mr-3 group-hover:scale-110 transition">📢</span>
+          <span class="font-semibold">Bulk Message</span>
+        </a>
         <!-- <a href="#" onclick="showTab('manual')" id="nav-manual" class="nav-item flex items-center px-8 py-4 text-slate-600 hover:bg-slate-50 transition group">
           <span class="text-xl mr-3 group-hover:scale-110 transition">✍️</span>
           <span class="font-semibold">Add Manual</span>
@@ -207,6 +211,53 @@
         </div>
       </div>
 
+      <!-- Bulk Message Tab -->
+      <div id="tab-bulk" class="tab-content hidden max-w-4xl mx-auto">
+        <div class="mb-8">
+          <h2 class="text-3xl font-bold text-slate-900">Bulk Messaging</h2>
+          <p class="text-slate-500 mt-2">Send WhatsApp campaigns to multiple users via Excel/CSV.</p>
+        </div>
+
+        <div class="bg-white p-8 md:p-10 rounded-2xl shadow-sm border border-slate-200">
+          <form id="bulk-form" class="space-y-8">
+            
+            <div class="bg-blue-50 border border-blue-100 rounded-xl p-6">
+              <h3 class="font-bold text-blue-800 mb-2">📋 Instructions</h3>
+              <ul class="text-sm text-blue-700 space-y-1 list-disc list-inside">
+                <li>Upload an <strong>Excel (.xlsx)</strong> or <strong>CSV</strong> file.</li>
+                <li>The file <strong>MUST</strong> have columns named <strong>Name</strong> and <strong>Contact Number</strong> (or similar).</li>
+                <li>Use <strong>{{name}}</strong> in your message to personalize it (e.g., "Hi {{name}}").</li>
+              </ul>
+            </div>
+
+            <div class="group relative border-2 border-dashed border-slate-300 rounded-2xl p-8 text-center hover:bg-blue-50 hover:border-blue-400 transition cursor-pointer" onclick="document.getElementById('bulk-file').click()">
+              <input type="file" id="bulk-file" name="file" class="hidden" accept=".csv,.xlsx,.xls" required />
+              <div class="text-slate-400 group-hover:text-blue-500 transition">
+                <div class="text-4xl mb-3">📂</div>
+                <p id="bulk-file-name" class="font-semibold text-lg text-slate-700">Upload Contact List</p>
+                <p class="text-sm mt-1">.xlsx or .csv files</p>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-sm font-semibold text-slate-700 mb-2">Message Content</label>
+              <textarea id="bulk-message" name="message" rows="6" class="w-full px-5 py-4 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition bg-slate-50 focus:bg-white" placeholder="Hi {{name}}, Check out our new collection!..." required></textarea>
+              <p class="text-xs text-slate-400 mt-1">Tip: Use {{name}} to insert the customer's name dynamically.</p>
+            </div>
+
+            <div>
+              <label class="block text-sm font-semibold text-slate-700 mb-2">Attachment (Optional)</label>
+              <input type="file" id="bulk-attachment" name="attachment" class="w-full px-5 py-4 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition bg-slate-50 focus:bg-white" />
+            </div>
+
+            <button type="submit" class="w-full bg-indigo-600 text-white py-4 rounded-xl hover:bg-indigo-700 transition font-bold shadow-lg shadow-indigo-200 flex justify-center items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed">
+              <span id="bulk-text">🚀 Send Campaign</span>
+              <div id="bulk-loader" class="loader hidden"></div>
+            </button>
+          </form>
+        </div>
+      </div>
+
       <!-- Manual Tab -->
       <div id="tab-manual" class="tab-content hidden max-w-4xl mx-auto">
         <div class="mb-8">
@@ -329,10 +380,10 @@
 
       <!-- Chat History Tab -->
       <div id="tab-chat" class="tab-content hidden max-w-7xl mx-auto h-[calc(100vh-140px)]">
-        <div class="flex h-full bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+        <div class="flex h-full bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden relative">
           
           <!-- Users List (Left Sidebar) -->
-          <div class="w-1/3 border-r border-slate-200 flex flex-col">
+          <div id="chat-list-panel" class="w-full md:w-1/3 border-r border-slate-200 flex flex-col bg-white h-full">
             <div class="p-4 border-b border-slate-100 bg-slate-50">
               <h3 class="font-bold text-slate-700">Conversations</h3>
               <div class="mt-2 relative">
@@ -346,15 +397,20 @@
           </div>
 
           <!-- Chat Area (Right Side) -->
-          <div class="w-2/3 flex flex-col bg-slate-50">
+          <div id="chat-detail-panel" class="hidden md:flex w-full md:w-2/3 flex-col bg-slate-50 absolute inset-0 md:static z-20 h-full">
             <!-- Chat Header -->
             <div id="chat-header" class="p-4 bg-white border-b border-slate-200 flex justify-between items-center hidden">
-              <div>
-                <h3 id="chat-active-user" class="font-bold text-slate-800 text-lg">Select a conversation</h3>
-                <p id="chat-active-time" class="text-xs text-slate-500"></p>
+              <div class="flex items-center gap-3">
+                <button onclick="closeChatDetail()" class="md:hidden p-2 -ml-2 text-slate-500 hover:bg-slate-100 rounded-full">
+                  ⬅️
+                </button>
+                <div>
+                    <h3 id="chat-active-user" class="font-bold text-slate-800 text-lg">Select a conversation</h3>
+                    <p id="chat-active-time" class="text-xs text-slate-500"></p>
+                </div>
               </div>
               <div class="flex items-center gap-2">
-                <button id="manual-toggle" onclick="toggleManual()" class="px-3 py-1.5 rounded-lg text-sm font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200">Enable Manual</button>
+                <button id="manual-toggle" onclick="toggleManual()" class="px-3 py-1.5 rounded-lg text-sm font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 hidden md:block">Enable Manual</button>
                 <button onclick="loadChatHistory(currentChatPhone)" class="text-slate-400 hover:text-blue-600 transition">🔄</button>
               </div>
             </div>
@@ -495,6 +551,12 @@
       if (tabName === 'list') loadDocuments();
       if (tabName === 'chat') loadChatUsers();
       if (tabName === 'leads') loadLeads();
+
+      // Close sidebar on mobile
+      if (window.innerWidth < 768) {
+         document.querySelector('aside').classList.add('hidden');
+         document.querySelector('aside').classList.remove('flex');
+      }
     }
 
     // --- HELPERS ---
@@ -510,6 +572,7 @@
       } else {
         if (formId === "upload-form") textEl.textContent = "Start Training";
         else if (formId === "product-form") textEl.textContent = "Add Product & Train AI";
+        else if (formId === "bulk-form") textEl.textContent = "🚀 Send Campaign";
         else textEl.textContent = "Save to Knowledge Base";
         
         loaderEl.classList.add("hidden");
@@ -695,6 +758,13 @@
       document.getElementById("chat-header").classList.remove("hidden");
       document.getElementById("chat-active-user").textContent = phone;
       document.getElementById("chat-active-time").textContent = "Loading...";
+
+      // Show detail panel on mobile
+      if (window.innerWidth < 768) {
+          document.getElementById('chat-list-panel').classList.add('hidden');
+          document.getElementById('chat-detail-panel').classList.remove('hidden');
+          document.getElementById('chat-detail-panel').classList.add('flex');
+      }
 
       const container = document.getElementById("chat-messages");
       container.innerHTML = '<div class="flex justify-center p-10"><div class="loader border-slate-300 border-t-blue-600"></div></div>';
@@ -1255,6 +1325,55 @@
 
     // Init
     checkAuth();
+    // --- BULK MESSAGE ---
+    document.getElementById("bulk-file").addEventListener("change", (e) => {
+      const fileName = e.target.files[0]?.name || "Upload Contact List";
+      document.getElementById("bulk-file-name").textContent = fileName;
+    });
+
+    document.getElementById("bulk-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fileInput = document.getElementById("bulk-file");
+      const message = document.getElementById("bulk-message").value;
+      const attachmentInput = document.getElementById("bulk-attachment");
+      
+      if (!fileInput.files[0]) return Swal.fire("Warning", "Please select a contact list file.", "warning");
+
+      const formData = new FormData();
+      formData.append("file", fileInput.files[0]);
+      formData.append("message", message);
+      if (attachmentInput.files[0]) {
+        formData.append("attachment", attachmentInput.files[0]);
+      }
+
+      setLoading("bulk-form", true);
+      try {
+        const res = await fetch(`${API_BASE}/bulk-message`, {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${localStorage.getItem("admin_token")}` },
+          body: formData
+        });
+        const data = await res.json();
+        
+        if (res.ok) {
+          Swal.fire("Success", `Bulk campaign started! Processing ${data.totalContacts || 'multiple'} contacts.`, "success");
+          document.getElementById("bulk-form").reset();
+          document.getElementById("bulk-file-name").textContent = "Upload Contact List";
+        } else {
+          Swal.fire("Error", data.error || "Failed to send bulk messages.", "error");
+        }
+      } catch (err) {
+        Swal.fire("Error", "Network error occurred.", "error");
+      }
+      setLoading("bulk-form", false);
+    });
+
+    function closeChatDetail() {
+        document.getElementById('chat-detail-panel').classList.add('hidden');
+        document.getElementById('chat-detail-panel').classList.remove('flex');
+        document.getElementById('chat-list-panel').classList.remove('hidden');
+        currentChatPhone = null;
+    }
   </script>
 </body>
 </html>

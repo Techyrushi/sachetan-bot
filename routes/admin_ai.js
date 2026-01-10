@@ -452,4 +452,104 @@ router.post("/chat/send", auth, upload.array('files', 10), async (req, res) => {
   }
 });
 
+// 12. BULK MESSAGE SEND
+router.post("/bulk-message", auth, upload.fields([{ name: "file", maxCount: 1 }, { name: "attachment", maxCount: 1 }]), async (req, res) => {
+  const fileInfo = req.files && req.files.file ? req.files.file[0] : null;
+  const attachment = req.files && req.files.attachment ? req.files.attachment[0] : null;
+  const { message } = req.body;
+
+  if (!fileInfo) return res.status(400).json({ error: "Contact list file (Excel/CSV) is required." });
+  if (!message) return res.status(400).json({ error: "Message content is required." });
+
+  const filePath = fileInfo.path;
+  const ext = path.extname(fileInfo.originalname).toLowerCase();
+  let contacts = [];
+
+  try {
+    // 1. Parse File
+    if (ext === ".xlsx" || ext === ".xls") {
+      const workbook = xlsx.readFile(filePath);
+      const sheetName = workbook.SheetNames[0];
+      contacts = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
+    } else if (ext === ".csv") {
+      contacts = [];
+      await new Promise((resolve, reject) => {
+        fs.createReadStream(filePath)
+          .pipe(csv())
+          .on("data", (data) => contacts.push(data))
+          .on("end", resolve)
+          .on("error", reject);
+      });
+    } else {
+      throw new Error("Unsupported file format. Use .csv or .xlsx");
+    }
+
+    if (!contacts.length) throw new Error("File is empty.");
+
+    // 2. Validate Columns
+    // We expect "Name" and "Contact Number" (case insensitive normalization needed)
+    // Let's normalize keys to lowercase
+    const normalizedContacts = contacts.map(row => {
+        const newRow = {};
+        Object.keys(row).forEach(key => {
+            newRow[key.trim().toLowerCase()] = row[key];
+        });
+        return newRow;
+    });
+
+    // 3. Send Messages
+    let sentCount = 0;
+    let failedCount = 0;
+    const mediaUrl = attachment ? `${process.env.BASE_URL}/uploads/${attachment.filename}` : null;
+
+    for (const contact of normalizedContacts) {
+        // Find phone number column (contact number, phone, mobile, etc.)
+        const phoneKey = Object.keys(contact).find(k => k.includes("contact") || k.includes("phone") || k.includes("mobile") || k.includes("number"));
+        let phone = phoneKey ? contact[phoneKey] : null;
+
+        if (phone) {
+            // Clean phone number
+            phone = String(phone).replace(/[^0-9]/g, "");
+            if (phone.length === 10) phone = "91" + phone; // Assume India if 10 digits
+            
+            // Variable Substitution
+            let personalizedMessage = message;
+            // Replace {{name}} with Name
+            const nameKey = Object.keys(contact).find(k => k.includes("name"));
+            const name = nameKey ? contact[nameKey] : "Customer";
+            
+            personalizedMessage = personalizedMessage.replace(/{{name}}/gi, name);
+
+            // Send
+            try {
+                await sendWhatsApp(phone, personalizedMessage, { mediaUrl });
+                await pool.query(
+                    "INSERT INTO tbl_chat_history (phone, sender, message, media_url, created_at) VALUES (?, 'admin_bulk', ?, ?, NOW())", 
+                    [phone, personalizedMessage, mediaUrl]
+                );
+                sentCount++;
+            } catch (e) {
+                console.error(`Failed to send to ${phone}:`, e.message);
+                failedCount++;
+            }
+        } else {
+            failedCount++; // No phone number found in row
+        }
+    }
+
+    res.json({ 
+        success: true, 
+        message: `Bulk sending completed. Sent: ${sentCount}, Failed: ${failedCount}`,
+        stats: { sent: sentCount, failed: failedCount }
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    // Cleanup uploaded contact list (keep attachment)
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath); 
+  }
+});
+
 module.exports = router;

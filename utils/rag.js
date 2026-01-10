@@ -228,7 +228,7 @@ async function resetIndex(collectionName = DEFAULT_COLLECTION) {
   }
   */
 
-async function queryRag(query, topK = 4, collectionName = DEFAULT_COLLECTION, filter = {}, strict = false) {
+async function queryRag(query, topK = 4, collectionName = DEFAULT_COLLECTION, filter = {}, strict = false, systemPromptOverride = null) {
   const dim = await getIndexDimension();
   const queryRaw = await embedText(query);
   const queryEmb = adjustToDimension(queryRaw, dim);
@@ -252,13 +252,36 @@ async function queryRag(query, topK = 4, collectionName = DEFAULT_COLLECTION, fi
 
       const response = await namespace.query(queryRequest);
       matches = response.matches || [];
-      docs = matches.map(m => m.metadata?.text || "").filter(Boolean);
+      docs = matches.map(m => {
+          let text = m.metadata?.text || "";
+          
+          // Helper to process image fields
+          const processImages = (fieldValue) => {
+              if (!fieldValue) return;
+              const urls = fieldValue.split(",").map(u => u.trim()).filter(u => u.length > 0);
+              urls.forEach(url => {
+                  // Extract filename for AI context
+                  const filename = url.split('/').pop();
+                  text += `\nImage Option: ${filename} | URL: ${url}`;
+              });
+          };
+
+          if (m.metadata?.image) processImages(m.metadata.image);
+          if (m.metadata?.image_url) processImages(m.metadata.image_url);
+          
+          return text;
+      }).filter(Boolean);
 
   } catch (err) {
       console.error("Pinecone query failed:", err);
   }
   
   if (docs.length === 0) {
+      // If specific sales prompt is used, we might not want the generic fallback
+      if (systemPromptOverride) {
+         // Try to answer with LLM knowledge even if no docs found, or just return basic apology
+         // But for now let's use the standard fallback logic but adapted
+      }
       return { 
           answer: "I apologize, but I couldn't find specific information regarding your query in our current records. 😓\n\nHowever, our support team is ready to help you!\n\n📞 *Call us:* +91 92263 22231 / +91 84460 22231\n📧 *Email:* sagar9994@rediffmail.com\n🌐 *Visit:* https://sachetanpackaging.in\n\nWould you like to try searching in a different category?", 
           mediaUrls: [], 
@@ -269,7 +292,7 @@ async function queryRag(query, topK = 4, collectionName = DEFAULT_COLLECTION, fi
   }
 
   const context = docs.join("\n\n");
-  const rawAnswer = await generateAnswer(query, context);
+  const rawAnswer = await generateAnswer(query, context, systemPromptOverride);
   
   // Extract Media URLs
   const mediaUrls = [];
@@ -292,13 +315,13 @@ async function queryRag(query, topK = 4, collectionName = DEFAULT_COLLECTION, fi
   return { answer, mediaUrls, context, matches };
 }
 
-async function generateAnswer(prompt, context) {
+async function generateAnswer(prompt, context, systemPromptOverride = null) {
   for (const { client, model, name } of clients) {
     try {
-      const completion = await client.chat.completions.create({
-        model: model,
-        messages: [
-          { role: "system", content: `You are a professional sales executive for a packaging manufacturing company (Sachetan Packaging).
+      const messages = [
+        { 
+          role: "system", 
+          content: systemPromptOverride || `You are a professional sales executive for a packaging manufacturing company (Sachetan Packaging).
 You sell boxes, bases, paper bags, and customized printed packaging via WhatsApp.
 Your goal is to guide customers naturally and convert inquiries into quotations or leads.
 
@@ -358,9 +381,14 @@ Change of requirements: acknowledge, update context, continue.
 Impossible/unavailable: avoid "not possible"; explain limitation; suggest close alternative.
 Image/file shared: acknowledge; guide if format/clarity needed.
 Multiple questions: answer clearly in points.
-` },
-          { role: "user", content: `Context:\n${context}\n\nUser question:\n${prompt}` },
-        ],
+` 
+        },
+        { role: "user", content: `Context:\n${context}\n\nUser question:\n${prompt}` },
+      ];
+
+      const completion = await client.chat.completions.create({
+        model: model,
+        messages: messages,
       });
       return completion.choices[0].message.content;
     } catch (error) {

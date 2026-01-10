@@ -147,24 +147,70 @@ async function logConversation(data) {
   return appendRow(range, values);
 }
 
+async function updateRow(range, values) {
+  const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
+  const auth = getAuth();
+  if (!spreadsheetId || !auth) return false;
+  const sheets = google.sheets({ version: "v4", auth });
+  
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range,
+    valueInputOption: "RAW",
+    requestBody: { values: [values] }
+  });
+  return true;
+}
+
 async function logLead(data) {
-  const range = process.env.GOOGLE_SHEETS_LEADS_RANGE || "Leads!A1";
-  await ensureHeaders(range, ["Timestamp", "Phone", "Name", "City", "Pincode", "Product", "Size", "Paper", "Quantity", "Printing", "Notes", "Converted"]);
+  const rangeName = process.env.GOOGLE_SHEETS_LEADS_RANGE || "Leads!A1";
+  const headers = ["Timestamp", "Phone", "Name", "City", "Product", "Size", "Paper", "Quantity", "Printing", "Notes", "Converted"];
+  await ensureHeaders(rangeName, headers);
+
+  // Read existing rows to find if user exists
+  const rows = await module.exports.readRange(rangeName);
+  let rowIndex = -1;
+  let existingRow = null;
+
+  if (rows && rows.length > 0) {
+    // Assuming Phone is at index 1 (0-based) based on headers above
+    // Header row is index 0
+    for (let i = 1; i < rows.length; i++) {
+      if (rows[i][1] === data.phone) {
+        rowIndex = i + 1; // 1-based index for Sheets
+        existingRow = rows[i];
+        break;
+      }
+    }
+  }
+
+  const timestamp = new Date().toISOString();
+  
+  // Prepare new values (merge with existing if needed, but here we overwrite mostly to keep latest state)
+  // If updating, keep original timestamp if you want, or update it. Let's update it to show latest activity.
   const values = [
-    new Date().toISOString(),
+    timestamp,
     data.phone || "",
-    data.name || "",
-    data.city || "",
-    data.pincode || "",
-    data.product || "",
-    data.size || "",
-    data.paper || "",
-    data.quantity || "",
-    data.printing || "",
-    data.notes || "",
-    data.converted === true ? "YES" : "NO",
+    data.name || (existingRow ? existingRow[2] : ""),
+    data.city || (existingRow ? existingRow[3] : ""),
+    data.product || (existingRow ? existingRow[4] : ""),
+    data.size || (existingRow ? existingRow[5] : ""),
+    data.paper || (existingRow ? existingRow[6] : ""),
+    data.quantity || (existingRow ? existingRow[7] : ""),
+    data.printing || (existingRow ? existingRow[8] : ""),
+    data.notes || (existingRow ? existingRow[9] : ""),
+    data.converted === true ? "YES" : (existingRow ? existingRow[10] : "NO"),
   ];
-  return appendRow(range, values);
+
+  if (rowIndex !== -1) {
+    // Update existing row
+    const sheetName = rangeName.split("!")[0];
+    const updateRange = `${sheetName}!A${rowIndex}`;
+    return updateRow(updateRange, values);
+  } else {
+    // Append new row
+    return appendRow(rangeName, values);
+  }
 }
 
 async function logUserMedia(phone, mediaUrl) {
