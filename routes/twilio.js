@@ -94,11 +94,35 @@ async function ensureSessionTable() {
         sender ENUM('user', 'bot') NOT NULL,
         message TEXT,
         media_url TEXT,
+        message_sid VARCHAR(100),
+        status VARCHAR(50),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_phone (phone),
-        INDEX idx_created_at (created_at)
+        INDEX idx_created_at (created_at),
+        INDEX idx_message_sid (message_sid)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
+
+    // Add message_sid column
+    try {
+      await mysqlPool.query(`
+        ALTER TABLE tbl_chat_history
+        ADD COLUMN message_sid VARCHAR(100) NULL,
+        ADD INDEX idx_message_sid (message_sid)
+      `);
+    } catch (e) {
+      // Ignore if column already exists
+    }
+
+    // Add status column
+    try {
+      await mysqlPool.query(`
+        ALTER TABLE tbl_chat_history
+        ADD COLUMN status VARCHAR(50) NULL
+      `);
+    } catch (e) {
+      // Ignore if column already exists
+    }
 
     // Add context column for AI state
     try {
@@ -501,7 +525,7 @@ router.post("/", async (req, res) => {
         await mysqlPool.query("UPDATE tbl_chat_sessions SET context = ? WHERE phone = ?", [JSON.stringify(session.context), from]);
 
         await logUserMedia(from, localMediaUrl);
-        await logChatToDB(from, 'user', '[Media Upload]', localMediaUrl);
+        await logChatToDB(from, 'user', '[Media Upload]', localMediaUrl, req.body.MessageSid, req.body.SmsStatus || 'received');
 
         if (session.stage === 'custom_solutions') {
              await sendAndLog(from, "✅ Image received. Analyzing...");

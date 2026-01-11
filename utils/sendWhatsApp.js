@@ -78,7 +78,8 @@ async function sendWhatsApp(to, body, options = {}) {
   const msgData = {
     from: TWILIO_WHATSAPP_NUMBER,
     to,
-    body: messageBody
+    body: messageBody,
+    statusCallback
   };
 
   if (isValidMediaUrl(options.mediaUrl)) {
