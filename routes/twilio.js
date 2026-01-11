@@ -13,6 +13,11 @@ const cron = require("node-cron");
 const path = require("path");
 const fs = require("fs");
 const axios = require("axios");
+const twilio = require("twilio");
+
+const client = (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) 
+  ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN) 
+  : null;
 
 // Helper to download media
 async function downloadMedia(url, filename) {
@@ -398,7 +403,7 @@ const rateLimit = new Map(); // phone -> [timestamps]
 router.post("/", async (req, res) => {
   try {
     const from = req.body.From;
-    const body = (req.body.Body || "").trim().toLowerCase();
+    let body = (req.body.Body || "").trim().toLowerCase();
     
     // 0. Rate Limiting (10 msgs per 60s)
     const now = Date.now();
@@ -441,52 +446,6 @@ router.post("/", async (req, res) => {
     // 3. Update Session Timestamp for Bot (only if not manual)
     await updateSessionTimestamp(from, router.sessions && router.sessions[from] ? router.sessions[from].stage : 'menu');
 
-    // Handle Media Uploads
-    if (numMedia > 0) {
-      const mediaUrl = req.body.MediaUrl0;
-      const mediaType = req.body.MediaContentType0;
-      const ext = mediaType.split("/")[1] || "bin";
-      const filename = `user_${Date.now()}.${ext}`;
-
-      try {
-        console.log(`Downloading media from ${mediaUrl} to ${filename}`);
-        await downloadMedia(mediaUrl, filename);
-
-        const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-        const host = req.headers['x-forwarded-host'] || req.get('host');
-        const baseUrl = process.env.BASE_URL || `${protocol}://${host}`;
-        const localMediaUrl = `${baseUrl}/uploads/${filename}`;
-
-        console.log(`Media saved locally at: ${localMediaUrl}`);
-
-        await sendAndLog(from, "✅ We have received your file. Our team will review it and get back to you with a customized solution.");
-
-        await logChatToDB(from, 'user', '[Media Upload]', localMediaUrl);
-
-        // Log to Excel
-        await logUserMedia(from, localMediaUrl);
-
-        // Log to Sheets or notify admin
-        await logConversation({
-          phone: from,
-          name: router.sessions?.[from]?.sales?.name || "User Media",
-          city: router.sessions?.[from]?.sales?.city || "Unknown",
-          stage: "media_upload",
-          message: `[Media Upload] ${localMediaUrl}`,
-          reply: "File received",
-          mediaUrl: localMediaUrl
-        });
-
-        return res.end();
-      } catch (e) {
-        console.error("Media download failed:", e);
-        // Fallback: log the original Twilio URL if download fails
-        await logChatToDB(from, 'user', '[Media Upload Failed]', mediaUrl);
-        await sendAndLog(from, "⚠️ We couldn't download your file. Please try sending it again.");
-        return res.end();
-      }
-    }
-
     const userName = from.split("+")[1] || "there";
 
     router.sessions = router.sessions || {};
@@ -516,6 +475,65 @@ router.post("/", async (req, res) => {
 
     const session = sessions[from];
 
+    // Handle Media Uploads
+    if (numMedia > 0) {
+      const mediaUrl = req.body.MediaUrl0;
+      const mediaType = req.body.MediaContentType0;
+      const ext = mediaType.split("/")[1] || "bin";
+      const filename = `user_${Date.now()}.${ext}`;
+
+      try {
+        console.log(`Downloading media from ${mediaUrl} to ${filename}`);
+        await downloadMedia(mediaUrl, filename);
+
+        const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+        const host = req.headers['x-forwarded-host'] || req.get('host');
+        const baseUrl = process.env.BASE_URL || `${protocol}://${host}`;
+        const localMediaUrl = `${baseUrl}/uploads/${filename}`;
+
+        console.log(`Media saved locally at: ${localMediaUrl}`);
+
+        // Update Session Context with Media URL
+        session.context = session.context || {};
+        session.context.mediaUrl = localMediaUrl;
+        
+        // Persist context update
+        await mysqlPool.query("UPDATE tbl_chat_sessions SET context = ? WHERE phone = ?", [JSON.stringify(session.context), from]);
+
+        await logUserMedia(from, localMediaUrl);
+        await logChatToDB(from, 'user', '[Media Upload]', localMediaUrl);
+
+        if (session.stage === 'custom_solutions') {
+             await sendAndLog(from, "✅ Image received. Analyzing...");
+             // Allow flow to proceed to custom_solutions logic
+             // If body is empty, set a placeholder so greeting checks etc don't crash
+             if (!req.body.Body) {
+                 req.body.Body = "I sent an image.";
+                 body = "i sent an image.";
+             }
+        } else {
+            await sendAndLog(from, "✅ We have received your file. Our team will review it and get back to you with a customized solution.");
+            
+            await logConversation({
+              phone: from,
+              name: router.sessions?.[from]?.sales?.name || "User Media",
+              city: router.sessions?.[from]?.sales?.city || "Unknown",
+              stage: "media_upload",
+              message: `[Media Upload] ${localMediaUrl}`,
+              reply: "File received",
+              mediaUrl: localMediaUrl
+            });
+
+            return res.end();
+        }
+      } catch (e) {
+        console.error("Media download failed:", e);
+        await logChatToDB(from, 'user', '[Media Upload Failed]', mediaUrl);
+        await sendAndLog(from, "⚠️ We couldn't download your file. Please try sending it again.");
+        return res.end();
+      }
+    }
+
     // Define keyword lists
     const greetingKeywords = [
       "hi", "hello", "hey", "hii", "hiii", "hola", "namaste", "namaskar",
@@ -530,7 +548,6 @@ router.post("/", async (req, res) => {
       "menu", "main menu", "back", "home", "exit", "end", "stop", "reset", "quit", "abort", "leave",
       "thanks", "thank you", "thankyou", "thx", "ty", "thank u",
       "ok", "okay", "cool", "done", "confirmed",
-      "yes", "yep", "yo",
       "thank you for confirming my booking.",
       "go to menu", "Go to Menu" // Added explicit match for "Go to Menu" button text
     ];
@@ -672,7 +689,7 @@ _Reply with a number to proceed._`,
                  converted: false
              });
              
-             await sendAndLog(from, `Thanks ${name.split(' ')[0]}! 😊`);
+             await sendAndLog(from, `Thanks ${name.split(' ')[0]}! 😊, Just a moment… I'm preparing the best options for you 🧠✨`);
              
              if (originalQuery) {
                  queryText = originalQuery; // Use the original question for AI
@@ -698,6 +715,14 @@ _Reply with a number to proceed._`,
       // 2. Prepare Prompt
       const contextString = JSON.stringify(currentContext, null, 2);
       
+      // SEND IMMEDIATE 200 OK TO TWILIO TO PREVENT TIMEOUT
+      // AND MARK AS READ IF POSSIBLE
+      res.status(200).end();
+
+      if (client && req.body.MessageSid) {
+          client.messages(req.body.MessageSid).update({status: 'read'}).catch(e => console.error("Read status failed", e.message));
+      }
+
       const systemPrompt = `You are a trained packaging sales executive for Sachetan Packaging.
 Your job is to Convert WhatsApp conversations into accurate quotations and real orders.
 
@@ -729,6 +754,7 @@ Printing (plain / printed)
 Material (if given)
 Quantity
 Previous selections
+Quoted Rate (store the last quoted rate to maintain consistency)
 
 When the user says:
 price, rate, total, how much, quotation, amount
@@ -738,7 +764,27 @@ If any field is missing, ask only for the missing field do not reset the convers
 
 🧠 Smart Language & Auto-Correction
 You must understand: English, Hindi, Marathi, Hinglish, Typos, Spoken language.
+Recognize "Hi, "Hii", "Hlo", "Hello" as greetings if context implies.
+if User Type "quit", "exit", "abort" then show menu.
 Never say “I don’t understand” — infer intent.
+
+🔢 Pricing & Quantity Rules (CRITICAL):
+1. Minimum Order Quantity (MOQ):
+   - If User Type is "Store Owner/ Bulk Buyer": MOQ is 1500 pcs. If user asks < 1500, inform them politely and suggest 1500 for best rates.
+   - If User Type is "Sweet Shop Owner": MOQ is 200 pcs.
+   - If User Type is "Homebaker": MOQ is 50 pcs.
+
+2. Quantity-Based Pricing Logic:
+   - If Quantity > 2000: Use the "Bulk Rate" (Low Value).
+   - If Quantity <= 2000: Use the "Standard Rate" (High Value).
+   - If only one rate is found in context, use that single rate.
+   - Apply this logic consistently.
+
+3. Price Consistency Rule:
+   - Once a rate is quoted (e.g. ₹6.50), YOU MUST LOCK IT.
+   - In the "Confirmation" message, use the EXACT SAME RATE as the quotation.
+   - Do NOT revert to a higher price after the user says "Yes".
+   - Check the "Quoted Rate" in the context before generating the final confirmation.
 
 🧾 Professional Quotation Format
 Whenever user asks price, you must respond in this exact format:
@@ -749,8 +795,9 @@ Size: {Size}
 Material: {Material or Standard Food Grade}
 Print: {Plain / Printed}
 Quantity: {Qty}
+Reference Image: {Yes/No - if mediaUrl exists}
 
-Rate: ₹{rate per piece}
+Rate: ₹{rate per piece} ({(Bulk/Standard) Rate applied})
 Subtotal: ₹{qty × rate}
 GST (5%): ₹{gst}
 --------------------------------
@@ -777,6 +824,21 @@ Never skip GST.
 If user changes quantity, recalculate instantly.
 If the calculation seems wrong, double-check it before replying.
 
+🤝 CONFIRMATION FLOW:
+If user says "Yes" / "Confirm" / "Ok" to the quotation:
+1. Reply with: "🎉 Thank you for confirming your order, {Name}! We're excited to serve you."
+2. Show Final Order Details using the EXACT SAME PRICES from the previous quotation.
+   - Product, Size, Qty
+   - Rate (MUST MATCH PREVIOUS QUOTE), Subtotal, GST, Total
+3. Append: "📞 Payment & Dispatch Coordination: Our team will call you shortly..."
+4. Append: "Reply 'menu' to start a new chat."
+5. Output <CONTEXT_JSON> with "status": "confirmed".
+
+If user says "No" / "Cancel" / "Too high":
+1. Ask politely for the reason (Price? Delivery time?).
+2. Try to convince or offer alternatives (e.g. "We can offer a better rate for higher quantities!" or "We have a standard version available.").
+3. Be a helpful sales agent, try to convert the lead!
+
 STATE MANAGEMENT:
 You must extract the current Order Context from the conversation.
 At the END of your response, you MUST output the updated context in a JSON block like this:
@@ -786,7 +848,8 @@ At the END of your response, you MUST output the updated context in a JSON block
   "size": "...",
   "printing": "...",
   "material": "...",
-  "quantity": "..."
+  "quantity": "...",
+  "quotedRate": "6.50"
 }
 </CONTEXT_JSON>
 Only update fields that are present or changed. Keep others as is.
@@ -854,18 +917,20 @@ Current Context: ${contextString}
 ${reply}
 
 _Please follow up with this lead._`;
+
+                 // Append User Media to Admin Alert if available
+                 if (currentContext.mediaUrl) {
+                     alertMsg += `\n\n📷 *User Media:* ${currentContext.mediaUrl}`;
+                 }
                  
                  for (const adminNum of adminNumbers) {
-                     // Ensure admin number has whatsapp: prefix if not present (assuming env might just be numbers)
-                     // But sendWhatsApp handles standard numbers if formatted correctly or we assume 'whatsapp:' is needed for Twilio
-                     // sendWhatsApp helper usually expects the full ID like 'whatsapp:+91...'
-                     // Let's assume env vars are just numbers like '+9198...' and we prefix.
-                     // Or better, let's assume they are full IDs or just try to format.
-                     // To be safe, let's check prefix.
                      let target = adminNum;
                      if (!target.startsWith("whatsapp:")) target = "whatsapp:" + target;
-                     
-                     await sendAndLog(target, alertMsg);
+                     try {
+                        await sendAndLog(target, alertMsg);
+                     } catch (err) {
+                        console.error(`Failed to send admin alert to ${target}:`, err.message);
+                     }
                  }
              }
         }
@@ -879,7 +944,7 @@ _Please follow up with this lead._`;
         await sendAndLog(from, "I'm having a bit of trouble connecting to my brain right now. 🧠\nPlease try again in a moment!");
       }
 
-      return res.end();
+      return;
     }
 
     if (session.stage === "menu") {
@@ -1821,7 +1886,7 @@ Reply 'menu' to return.`,
         const gsmMatch = s.match(/(\d{2,4})\s*gsm/);
         const paper = gsmMatch ? `${gsmMatch[1]} GSM` : "";
         const printing = /print|printed|logo|branding|custom/.test(s)
-          ? "Yes"
+          ? toLowerCase("Yes")
           : "";
         return { product, size, paper, quantity, printing };
       }
@@ -1931,16 +1996,70 @@ Reply with a number.`
 
         await sendAndLog(from, reply);
 
-        // Send media separately if available
+        // Enhanced Image Matching & Fallback Logic
+        const isAskingForImage = /image|photo|pic|show|see|look|design|demo|sample/i.test(question);
+        
         if (result.mediaUrls && result.mediaUrls.length > 0) {
           session.sentMediaUrls = session.sentMediaUrls || new Set();
-          for (const mediaUrl of result.mediaUrls) {
+          
+          // Extract significant terms from user query for filename matching
+          const stopWords = ["i", "want", "need", "show", "me", "images", "photos", "pics", "of", "the", "a", "an", "for", "in", "is", "are", "please", "can", "you", "give", "send"];
+          const queryTerms = question.toLowerCase()
+              .replace(/[^\w\s]/g, "") // remove punctuation
+              .split(/\s+/)
+              .filter(w => !stopWords.includes(w) && w.length > 2);
+
+          let mediaToSend = [];
+
+          if (queryTerms.length > 0) {
+              // Try to find specific matches in filenames
+              const matches = result.mediaUrls.filter(url => {
+                  const filename = url.split("/").pop().toLowerCase();
+                  return queryTerms.some(term => filename.includes(term));
+              });
+              
+              if (matches.length > 0) {
+                  mediaToSend = matches;
+              } else if (isAskingForImage) {
+                  // Specific request ("cake base") but no filename match found in RAG results
+                  await sendAndLog(from, `I don't have a specific demo image for *"${queryTerms.join(" ")}"* handy right now.
+                  
+However, our support team can share photos with you!
+📞 *Call/WhatsApp:* +91 92263 22231
+📧 *Email:* sagar9994@rediffmail.com
+
+_Please continue, I can still help with pricing and details!_`);
+              } else {
+                  // User didn't explicitly ask for image, and no specific match found.
+                  // Optionally send nothing, or send all? 
+                  // If RAG thought they were relevant, maybe we send them anyway if confidence is high?
+                  // For now, let's be conservative to avoid spamming irrelevant images.
+                  // But if query was "prices for box", RAG might return box images.
+                  // Let's send all if no specific terms conflicted? 
+                  // No, user wants "as per selection type product give image".
+                  // So strict matching is preferred.
+                  // If no strict match, we don't send media.
+              }
+          } else {
+              // Generic request ("show me images"), send all available from context
+              mediaToSend = result.mediaUrls;
+          }
+
+          for (const mediaUrl of mediaToSend) {
             const url = String(mediaUrl || "").trim();
             if (url && !session.sentMediaUrls.has(url)) {
               await sendAndLog(from, "", { mediaUrl: url });
               session.sentMediaUrls.add(url);
             }
           }
+        } else if (isAskingForImage) {
+             // User asked for image, but RAG returned none
+             await sendAndLog(from, `I currently don't have a demo image for that available here.
+
+You can contact our support for specific photos:
+📞 +91 92263 22231
+
+_Is there anything else I can help you with?_`);
         }
 
         await logConversation({
