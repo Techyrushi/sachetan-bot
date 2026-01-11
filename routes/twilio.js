@@ -139,11 +139,11 @@ async function ensureSessionTable() {
 }
 ensureSessionTable();
 
-async function logChatToDB(phone, sender, message, mediaUrl = null) {
+async function logChatToDB(phone, sender, message, mediaUrl = null, messageSid = null, status = null) {
   try {
     await mysqlPool.query(
-      "INSERT INTO tbl_chat_history (phone, sender, message, media_url) VALUES (?, ?, ?, ?)",
-      [phone, sender, message, mediaUrl]
+      "INSERT INTO tbl_chat_history (phone, sender, message, media_url, message_sid, status) VALUES (?, ?, ?, ?, ?, ?)",
+      [phone, sender, message, mediaUrl, messageSid, status]
     );
   } catch (err) {
     console.error("Error logging chat to DB:", err);
@@ -152,12 +152,35 @@ async function logChatToDB(phone, sender, message, mediaUrl = null) {
 
 async function sendAndLog(to, body, options = {}) {
   try {
-    await sendWhatsApp(to, body, options);
-    await logChatToDB(to, 'bot', body, options.mediaUrl);
+    const message = await sendWhatsApp(to, body, options);
+    const messageSid = message ? message.sid : null;
+    const status = message ? message.status : null;
+    await logChatToDB(to, 'bot', body, options.mediaUrl, messageSid, status);
   } catch (err) {
     console.error("Error in sendAndLog:", err);
   }
 }
+
+// Status Callback Endpoint
+router.post("/status", async (req, res) => {
+  const messageSid = req.body.MessageSid;
+  const messageStatus = req.body.MessageStatus;
+
+  console.log(`Twilio Status Update: SID=${messageSid}, Status=${messageStatus}`);
+
+  if (messageSid && messageStatus) {
+    try {
+      await mysqlPool.query(
+        "UPDATE tbl_chat_history SET status = ? WHERE message_sid = ?",
+        [messageStatus, messageSid]
+      );
+    } catch (err) {
+      console.error("Error updating message status:", err);
+    }
+  }
+
+  res.sendStatus(200);
+});
 
 async function updateSessionTimestamp(phone, stage) {
   try {
@@ -447,7 +470,7 @@ router.post("/", async (req, res) => {
 
     // 1. Log incoming text if present (Always log user message first)
     if (req.body.Body) {
-      await logChatToDB(from, 'user', req.body.Body);
+      await logChatToDB(from, 'user', req.body.Body, null, req.body.MessageSid, req.body.SmsStatus || 'received');
     }
 
     // 2. Check DB for Manual Mode
@@ -595,7 +618,7 @@ router.post("/", async (req, res) => {
       await mysqlPool.query("INSERT INTO tbl_chat_sessions (phone, stage, context) VALUES (?, 'menu', '{}') ON DUPLICATE KEY UPDATE stage = 'menu', last_message_at = NOW()", [from]);
 
       // Only send logo and full welcome for greetings (not for menu/back)
-      if (isGreeting) {
+      if (isGreeting || isMenu) {
         const logoUrl = "https://sachetanpackaging.in/assets/uploads/sachetan_logos.png";
         await sendAndLog(from, "", { mediaUrl: logoUrl });
         await new Promise((r) => setTimeout(r, 2000)); // Wait 2s for media
