@@ -35,8 +35,6 @@ async function sendWhatsApp(to, body, options = {}) {
     return (trimmed.startsWith("http://") || trimmed.startsWith("https://")) && trimmed.length > 8;
   };
 
-  const statusCallback = process.env.BASE_URL ? `${process.env.BASE_URL}/webhook/twilio/status` : null;
-
   // 1. Try sending via Content API (Real Interactive Buttons) if SID provided
   if (options.contentSid) {
     try {
@@ -80,8 +78,7 @@ async function sendWhatsApp(to, body, options = {}) {
   const msgData = {
     from: TWILIO_WHATSAPP_NUMBER,
     to,
-    body: messageBody,
-    statusCallback
+    body: messageBody
   };
 
   if (isValidMediaUrl(options.mediaUrl)) {

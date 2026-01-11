@@ -182,6 +182,11 @@ router.post("/status", async (req, res) => {
   res.sendStatus(200);
 });
 
+// GET Endpoint for easy browser verification
+router.get("/status", (req, res) => {
+  res.send("✅ Twilio Status Callback Endpoint is Active and Listening!");
+});
+
 async function updateSessionTimestamp(phone, stage) {
   try {
     await mysqlPool.query(
