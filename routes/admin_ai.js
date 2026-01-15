@@ -35,6 +35,36 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
 });
 
+// Normalize different phone formats to Twilio WhatsApp E.164 format
+function normalizeWhatsAppNumber(input) {
+  if (!input) return null;
+  let s = String(input).trim();
+  // Remove existing whatsapp: prefix if present
+  if (s.toLowerCase().startsWith("whatsapp:")) {
+    s = s.slice("whatsapp:".length).trim();
+  }
+  // Convert leading 00 to +
+  if (s.startsWith("00")) {
+    s = "+" + s.slice(2);
+  }
+  // Remove all non-digits except leading +
+  s = s.replace(/(?!^\+)[^\d]/g, "");
+  // If it doesn't start with +, try to infer
+  if (!s.startsWith("+")) {
+    // If 10 digits, assume India
+    const digitsOnly = s.replace(/[^\d]/g, "");
+    if (digitsOnly.length === 10) {
+      s = "+91" + digitsOnly;
+    } else if (digitsOnly.length >= 11 && digitsOnly.length <= 15) {
+      // Assume already includes country code, add +
+      s = "+" + digitsOnly;
+    } else {
+      return null;
+    }
+  }
+  return `whatsapp:${s}`;
+}
+
 // Ensure table exists (Auto-migration)
 async function ensureTable() {
   try {
@@ -423,10 +453,12 @@ router.post("/chat/send", auth, upload.array('files', 10), async (req, res) => {
   }
   
   try {
+    const to = normalizeWhatsAppNumber(phone);
+    if (!to) return res.status(400).json({ error: "Invalid phone format" });
     // Case 1: Text only
     if (files.length === 0) {
-        await sendWhatsApp(phone, message);
-        await pool.query("INSERT INTO tbl_chat_history (phone, sender, message, media_url, created_at) VALUES (?, 'admin', ?, NULL, NOW())", [phone, message]);
+        await sendWhatsApp(to, message);
+        await pool.query("INSERT INTO tbl_chat_history (phone, sender, message, media_url, created_at) VALUES (?, 'admin', ?, NULL, NOW())", [to, message]);
     } 
     // Case 2: Files (with optional text attached to first one)
     else {
@@ -435,16 +467,16 @@ router.post("/chat/send", auth, upload.array('files', 10), async (req, res) => {
             const mediaUrl = `${process.env.BASE_URL}/uploads/${file.filename}`;
             const body = (i === 0) ? (message || "") : ""; // Attach text to first file only
 
-            await sendWhatsApp(phone, body, { mediaUrl });
+            await sendWhatsApp(to, body, { mediaUrl });
             
             await pool.query(
                 "INSERT INTO tbl_chat_history (phone, sender, message, media_url, created_at) VALUES (?, 'admin', ?, ?, NOW())", 
-                [phone, body, mediaUrl]
+                [to, body, mediaUrl]
             );
         }
     }
 
-    await pool.query("INSERT INTO tbl_chat_sessions (phone, stage) VALUES (?, 'manual') ON DUPLICATE KEY UPDATE last_message_at=NOW()", [phone]);
+    await pool.query("INSERT INTO tbl_chat_sessions (phone, stage) VALUES (?, 'manual') ON DUPLICATE KEY UPDATE last_message_at=NOW()", [to]);
     res.json({ ok: true });
   } catch (err) {
     console.error("Send error:", err);
@@ -508,9 +540,12 @@ router.post("/bulk-message", auth, upload.fields([{ name: "file", maxCount: 1 },
         let phone = phoneKey ? contact[phoneKey] : null;
 
         if (phone) {
-            // Clean phone number
-            phone = String(phone).replace(/[^0-9]/g, "");
-            if (phone.length === 10) phone = "91" + phone; // Assume India if 10 digits
+            // Normalize to WhatsApp E.164 format
+            const to = normalizeWhatsAppNumber(phone);
+            if (!to) {
+              failedCount++;
+              continue;
+            }
             
             // Variable Substitution
             let personalizedMessage = message;
@@ -522,14 +557,14 @@ router.post("/bulk-message", auth, upload.fields([{ name: "file", maxCount: 1 },
 
             // Send
             try {
-                await sendWhatsApp(phone, personalizedMessage, { mediaUrl });
+                await sendWhatsApp(to, personalizedMessage, { mediaUrl });
                 await pool.query(
                     "INSERT INTO tbl_chat_history (phone, sender, message, media_url, created_at) VALUES (?, 'admin_bulk', ?, ?, NOW())", 
-                    [phone, personalizedMessage, mediaUrl]
+                    [to, personalizedMessage, mediaUrl]
                 );
                 sentCount++;
             } catch (e) {
-                console.error(`Failed to send to ${phone}:`, e.message);
+                console.error(`Failed to send to ${to}:`, e.message);
                 failedCount++;
             }
         } else {
