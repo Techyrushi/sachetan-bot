@@ -13,6 +13,7 @@ const cron = require("node-cron");
 const path = require("path");
 const fs = require("fs");
 const axios = require("axios");
+const sharp = require("sharp");
 const twilio = require("twilio");
 
 const client = (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) 
@@ -51,6 +52,59 @@ async function downloadMedia(url, filename) {
     writer.on('finish', resolve);
     writer.on('error', reject);
   });
+}
+
+async function getSafeMediaPayload(imageUrl) {
+  if (!imageUrl) return {};
+  try {
+    const head = await axios.head(imageUrl);
+    const lenRaw = head.headers["content-length"] || head.headers["Content-Length"];
+    const len = lenRaw ? parseInt(lenRaw, 10) : 0;
+    if (!len || len > 4 * 1024 * 1024) {
+      // Download and compress
+      const response = await axios.get(imageUrl, { responseType: "arraybuffer" });
+      let img = sharp(response.data).rotate();
+      // Resize to max width 1200px to reduce size
+      img = img.resize({ width: 1200, withoutEnlargement: true }).jpeg({ quality: 80 });
+      let buffer = await img.toBuffer();
+      // If still large, reduce quality iteratively
+      let quality = 75;
+      while (buffer.length > 4 * 1024 * 1024 && quality >= 50) {
+        buffer = await sharp(buffer).jpeg({ quality }).toBuffer();
+        quality -= 5;
+      }
+      if (buffer.length > 4 * 1024 * 1024) {
+        // As a last resort, downscale further
+        buffer = await sharp(buffer).resize({ width: 900 }).jpeg({ quality: 60 }).toBuffer();
+      }
+      // Save to public/uploads
+      const uploadDir = path.join(__dirname, "../public/uploads");
+      if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+      const filename = `compressed_${Date.now()}.jpg`;
+      fs.writeFileSync(path.join(uploadDir, filename), buffer);
+      const baseUrl = process.env.BASE_URL;
+      const mediaUrl = `${baseUrl}/uploads/${filename}`;
+      return { mediaUrl };
+    } else {
+      return { mediaUrl: imageUrl };
+    }
+  } catch (e) {
+    console.error("Media HEAD failed, sending without media:", e);
+    try {
+      // Attempt compression anyway
+      const response = await axios.get(imageUrl, { responseType: "arraybuffer" });
+      const buffer = await sharp(response.data).resize({ width: 1200 }).jpeg({ quality: 80 }).toBuffer();
+      const uploadDir = path.join(__dirname, "../public/uploads");
+      if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+      const filename = `compressed_${Date.now()}.jpg`;
+      fs.writeFileSync(path.join(uploadDir, filename), buffer);
+      const mediaUrl = `${process.env.BASE_URL}/uploads/${filename}`;
+      return { mediaUrl };
+    } catch (err2) {
+      console.error("Fallback compression failed:", err2);
+      return {};
+    }
+  }
 }
 
 const router = express.Router();
@@ -185,6 +239,18 @@ router.post("/status", async (req, res) => {
 // GET Endpoint for easy browser verification
 router.get("/status", (req, res) => {
   res.send("✅ Twilio Status Callback Endpoint is Active and Listening!");
+});
+
+// Test-only: compress a given image URL and return the media URL
+router.get("/test/compress", async (req, res) => {
+  const u = req.query.url;
+  if (!u) return res.status(400).json({ error: "url query required" });
+  try {
+    const media = await getSafeMediaPayload(u);
+    res.json({ ok: true, media });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 async function updateSessionTimestamp(phone, stage) {
@@ -839,8 +905,9 @@ Never say “I don’t understand” — infer intent.
    - Check the "Quoted Rate" in the context before generating the final confirmation.
 
 🧾 Professional Quotation Format
-Whenever user asks price, you must respond in this exact format:
+Whenever user asks price, you must respond in one of these formats:
 
+Single Item:
 📄 Quotation – Sachetan Packaging
 Product: {Product Name}
 Size: {Size}
@@ -851,6 +918,21 @@ Reference Image: {Yes/No - if mediaUrl exists}
 
 Rate: ₹{rate per piece} ({(Bulk/Standard) Rate applied})
 Subtotal: ₹{qty × rate}
+GST (5%): ₹{gst}
+--------------------------------
+Total Payable: ₹{final amount}
+
+Multi Item (for multiple sizes/shapes like MDF cake bases):
+📄 Quotation – Sachetan Packaging
+Customer Type: {Homebaker / Store Owner/ Bulk Buyer / Sweet Shop Owner}
+Product Type: {e.g. MDF Cake Base}
+
+Items:
+1) {Shape/Size/Color} – Qty {qty1} × ₹{rate1} = ₹{lineTotal1}
+2) {Shape/Size/Color} – Qty {qty2} × ₹{rate2} = ₹{lineTotal2}
+3) ...
+
+Subtotal: ₹{sum of all line totals}
 GST (5%): ₹{gst}
 --------------------------------
 Total Payable: ₹{final amount}
@@ -880,11 +962,22 @@ If the calculation seems wrong, double-check it before replying.
 If user says "Yes" / "Confirm" / "Ok" or any other language which similar to english words Yes, confirm, ok to confirm the order: 
 1. Reply with: "🎉 Thank you for confirming your order, {Name}! We're excited to serve you."
 2. Show Final Order Details using the EXACT SAME PRICES from the previous quotation.
-   - Product, Size, Qty
-   - Rate (MUST MATCH PREVIOUS QUOTE), Subtotal, GST, Total
+   - For single item: Product, Size, Qty, Rate, Subtotal, GST, Total
+   - For multiple items: list all line items with Qty × Rate = Line Total, plus Subtotal, GST, Total
 3. Append: "📞 Payment & Dispatch Coordination: Our team will call you shortly..."
 4. Append: "Reply 'menu' to start a new chat."
-5. Output <CONTEXT_JSON> with "status": "confirmed".
+5. Output <CONTEXT_JSON> with:
+   - "status": "confirmed"
+   - For single item: "product", "size", "material", "quantity", "quotedRate", "subtotal", "gst", "total"
+   - For multiple items: 
+       "items": [
+         { "name": "MDF Cake Base 7\" Round Gold", "size": "7\" Round", "color": "Gold", "quantity": 100, "rate": 6.5, "total": 650 },
+         { "name": "MDF Cake Base 9\" Round Gold", "size": "9\" Round", "color": "Gold", "quantity": 100, "rate": 8.5, "total": 850 }
+       ],
+       "subtotal": 1500,
+       "gst": 75,
+       "total": 1575
+   - Include "name" and "city" in the JSON if known.
 
 If user says "No" / "Cancel" / "Too high":
 1. Ask politely for the reason (Price? Delivery time?).
@@ -927,22 +1020,208 @@ Current Context: ${contextString}
           try {
             const extractedContext = JSON.parse(jsonMatch[1]);
             newContext = { ...currentContext, ...extractedContext };
-            
-            // Log Lead Update if Product/Qty changes
-            if (newContext.product !== currentContext.product || newContext.quantity !== currentContext.quantity) {
-                 await logLead({
-                     phone: from,
-                     product: newContext.product,
-                     size: newContext.size,
-                     quantity: newContext.quantity,
-                     printing: newContext.printing,
-                     notes: "In Discussion",
-                     converted: false
-                 });
+
+            const productChanged = newContext.product !== currentContext.product;
+            const quantityChanged = newContext.quantity !== currentContext.quantity;
+
+            if (productChanged || quantityChanged) {
+              await logLead({
+                phone: from,
+                product: newContext.product,
+                size: newContext.size,
+                quantity: newContext.quantity,
+                printing: newContext.printing,
+                notes: "In Discussion",
+                converted: false,
+              });
             }
 
-            // Remove the JSON block from the reply sent to user
-            reply = reply.replace(/<CONTEXT_JSON>([\s\S]*?)<\/CONTEXT_JSON>/, "").trim();
+            let createdOrder = null;
+            const isConfirmed = newContext.status === "confirmed";
+            const hasOrderId = !!newContext.orderId;
+
+            if (isConfirmed && !hasOrderId) {
+              let items = [];
+
+              if (Array.isArray(newContext.items) && newContext.items.length > 0) {
+                items = newContext.items
+                  .map((it, index) => {
+                    const qty = Number(it.quantity || it.qty || 0) || 0;
+                    const rate =
+                      Number(
+                        it.rate ||
+                          it.price ||
+                          it.ratePerPiece ||
+                          it.rate_per_piece ||
+                          it.pricePerUnit
+                      ) || 0;
+                    let total = Number(it.total || 0);
+                    if (!total && qty && rate) {
+                      total = qty * rate;
+                    }
+                    if (!qty || !total) {
+                      return null;
+                    }
+                    return {
+                      productId: String(it.productId || `QUOTE-${index + 1}`),
+                      name:
+                        it.name ||
+                        it.product ||
+                        newContext.product ||
+                        "Quotation Item",
+                      price: rate,
+                      quantity: qty,
+                      total,
+                      size: it.size || "",
+                      color: it.color || "",
+                    };
+                  })
+                  .filter(Boolean);
+              }
+
+              if (!items.length) {
+                const qty = Number(newContext.quantity || 0) || 0;
+                const rate =
+                  Number(
+                    newContext.quotedRate ||
+                      newContext.rate ||
+                      newContext.pricePerUnit
+                  ) || 0;
+                let total = Number(newContext.total || 0);
+                if (!total && qty && rate) {
+                  total = qty * rate;
+                }
+                const finalQty = qty || 1;
+                const finalTotal = total || rate * finalQty;
+                items.push({
+                  productId: String(newContext.productId || "QUOTE-1"),
+                  name: newContext.product || "Custom Packaging",
+                  price: rate || finalTotal,
+                  quantity: finalQty,
+                  total: finalTotal,
+                  size: newContext.size || "",
+                  color: newContext.color || "",
+                });
+              }
+
+              let subtotal = items.reduce((sum, it) => sum + (Number(it.total) || 0), 0);
+              if (Number(newContext.subtotal || 0) > 0) {
+                subtotal = Number(newContext.subtotal);
+              }
+
+              let gst = Number(newContext.gst || 0);
+              if (!gst && subtotal) {
+                gst = Math.round(subtotal * 0.05);
+              }
+
+              let totalAmount =
+                Number(newContext.total || newContext.totalAmount || 0) || 0;
+              if (!totalAmount && subtotal) {
+                totalAmount = subtotal + gst;
+              }
+
+              const now = new Date();
+              const yy = String(now.getFullYear()).slice(-2);
+              const base = `${yy}${now.getMonth() + 1}${now
+                .getDate()
+                .toString()
+                .padStart(2, "0")}${now
+                .getHours()
+                .toString()
+                .padStart(2, "0")}${now
+                .getMinutes()
+                .toString()
+                .padStart(2, "0")}${now
+                .getSeconds()
+                .toString()
+                .padStart(2, "0")}`;
+              const randomSuffix = Math.floor(Math.random() * 1000)
+                .toString()
+                .padStart(3, "0");
+              const orderId = `QUO-${base}${randomSuffix}`;
+
+              const customerName =
+                (session.sales && session.sales.name) ||
+                newContext.name ||
+                "";
+              const address = newContext.address || "";
+              const pincode =
+                newContext.pincode ||
+                (session.sales && session.sales.pincode) ||
+                "";
+
+              const order = new Order({
+                orderId,
+                whatsapp: from,
+                items,
+                totalAmount,
+                status: "PENDING",
+                customerName,
+                address,
+                pincode,
+              });
+              await order.save();
+              createdOrder = order;
+
+              newContext.orderId = orderId;
+              newContext.orderMongoId = order._id.toString();
+
+              reply += `\n\n🆔 Quotation Reference ID: ${orderId}`;
+
+              const adminNumbers = (process.env.ADMIN_WHATSAPP || "")
+                .split(",")
+                .map((n) => n.trim())
+                .filter(Boolean);
+              if (adminNumbers.length > 0) {
+                const lines = items.map((it, idx) => {
+                  const sizePart = it.size ? `${it.size} – ` : "";
+                  const qtyPart = `Qty ${it.quantity}`;
+                  const ratePart =
+                    it.price && !isNaN(it.price)
+                      ? `× ₹${Number(it.price).toFixed(2)}`
+                      : "";
+                  const totalPart =
+                    it.total && !isNaN(it.total)
+                      ? `= ₹${Number(it.total).toFixed(2)}`
+                      : "";
+                  return `${idx + 1}) ${sizePart}${qtyPart} ${ratePart} ${totalPart}`.trim();
+                });
+
+                const adminMsg = `📢 Quotation Confirmed
+
+🆔 Reference ID: ${orderId}
+👤 Customer: ${customerName || "Unknown"}
+📞 Phone: ${from}
+🏙️ City: ${newContext.city || (session.sales && session.sales.city) || "Unknown"}
+
+🛒 Items:
+${lines.join("\n")}
+
+💰 Total (incl. GST): ₹${totalAmount}
+
+Please follow up with this confirmed quotation.`;
+
+                for (const adminNum of adminNumbers) {
+                  let target = adminNum;
+                  if (!target.startsWith("whatsapp:")) {
+                    target = "whatsapp:" + target;
+                  }
+                  try {
+                    await sendAndLog(target, adminMsg);
+                  } catch (err) {
+                    console.error(
+                      `Failed to send quotation confirmation to ${target}:`,
+                      err.message
+                    );
+                  }
+                }
+              }
+            }
+
+            reply = reply.replace(
+              /<CONTEXT_JSON>([\s\S]*?)<\/CONTEXT_JSON>/,
+              ""
+            ).trim();
           } catch (e) {
             console.error("Failed to parse context JSON from LLM:", e);
           }
@@ -1560,22 +1839,33 @@ _Reply with a number to proceed._`);
         ? `https://www.sachetanpackaging.in/assets/uploads/${product.p_featured_photo}`
         : null;
 
+      const packSize = 20;
+      const unitPrice =
+        product.p_current_price && packSize
+          ? (product.p_current_price / packSize).toFixed(2)
+          : product.p_current_price;
+
+      const mediaOptions = await getSafeMediaPayload(imageUrl);
+
       await sendAndLog(
         from,
         `📦 *${product.p_name}*
 ──────────────────
-💰 *Price: ₹${product.p_current_price}*${oldPriceDisplay}${sizeDisplay}${colorDisplay}${descDisplay}
+💰 *Pack Price (20 pcs): ₹${product.p_current_price}*${oldPriceDisplay}
+🧮 *Price per piece:* ₹${unitPrice}${sizeDisplay}${colorDisplay}${descDisplay}
 
-👉 *Reply with Quantity* (e.g., 10) to proceed.
+👉 *Reply with Quantity (20 or more)* to proceed.
+Minimum order: 20 pieces
 _Reply 'menu' to go back._`,
-        imageUrl ? { mediaUrl: imageUrl } : {}
+        mediaOptions
       );
       return res.end();
     }
 
     if (session.stage === "shop_quantity") {
-      const qty = parseInt(body);
-      if (isNaN(qty) || qty < 1) {
+      const packSize = 20;
+      const qty = parseInt(body, 10);
+      if (isNaN(qty) || qty < packSize) {
         if (isConversational(body)) {
           session.previousStage = session.stage;
           session.pendingQuestion = body;
@@ -1594,12 +1884,16 @@ _Reply 'menu' to go back._`,
         }
         await sendAndLog(
           from,
-          "Invalid quantity. Please enter a positive number."
+          `Invalid quantity. Please enter a valid quantity of ${packSize} or more.`
         );
         return res.end();
       }
       const product = session.selectedProduct;
-      const total = (product.p_current_price || 0) * qty;
+      const unitPrice =
+        product.p_current_price && packSize
+          ? product.p_current_price / packSize
+          : product.p_current_price || 0;
+      const total = unitPrice * qty;
 
       // Prepare item with full details
       const item = {
@@ -1614,13 +1908,16 @@ _Reply 'menu' to go back._`,
         // dimensions/weight if available in product object
       };
 
-      session.orderDraft = {
+      session.context = session.context || {};
+      session.context.orderDraft = {
         items: [item],
         totalAmount: total,
       };
 
       // Ask for Customer Details
       session.stage = "ask_name";
+      await mysqlPool.query("UPDATE tbl_chat_sessions SET stage = ?, context = ?, last_message_at = NOW() WHERE phone = ?", ["ask_name", JSON.stringify(session.context), from]);
+      
       await sendAndLog(from, "👤 *Please enter your Full Name:*");
       return res.end();
     }
@@ -1670,24 +1967,50 @@ _Reply 'menu' to go back._`,
         }
       }
 
-      session.orderDraft.customerName = body;
+      const draft = session.context.orderDraft || session.orderDraft;
+      if (!draft) {
+          // Recover if lost, or reset
+          session.stage = "menu";
+          await sendAndLog(from, "Session expired. Please start order again. Reply 'menu'.");
+          return res.end();
+      }
+      draft.customerName = body;
+      session.context.orderDraft = draft;
       session.stage = "ask_address";
+      await mysqlPool.query("UPDATE tbl_chat_sessions SET stage = ?, context = ?, last_message_at = NOW() WHERE phone = ?", ["ask_address", JSON.stringify(session.context), from]);
+      
       await sendAndLog(from, "📍 *Please enter your Delivery Address:*");
       return res.end();
     }
 
     if (session.stage === "ask_address") {
-      session.orderDraft.address = body;
+      const draft = session.context.orderDraft || session.orderDraft;
+      if (!draft) {
+          session.stage = "menu";
+          await sendAndLog(from, "Session expired. Please start order again. Reply 'menu'.");
+          return res.end();
+      }
+      draft.address = body;
+      session.context.orderDraft = draft;
       session.stage = "ask_pincode";
+      await mysqlPool.query("UPDATE tbl_chat_sessions SET stage = ?, context = ?, last_message_at = NOW() WHERE phone = ?", ["ask_pincode", JSON.stringify(session.context), from]);
+
       await sendAndLog(from, "📮 *Please enter your Pincode:*");
       return res.end();
     }
 
     if (session.stage === "ask_pincode") {
-      session.orderDraft.pincode = body;
+      const draft = session.context.orderDraft || session.orderDraft;
+      if (!draft) {
+          session.stage = "menu";
+          await sendAndLog(from, "Session expired. Please start order again. Reply 'menu'.");
+          return res.end();
+      }
+      draft.pincode = body;
+      session.context.orderDraft = draft;
       session.stage = "shop_confirm";
+      await mysqlPool.query("UPDATE tbl_chat_sessions SET stage = ?, context = ?, last_message_at = NOW() WHERE phone = ?", ["shop_confirm", JSON.stringify(session.context), from]);
 
-      const draft = session.orderDraft;
       const item = draft.items[0]; // Currently single item flow
 
       await sendAndLog(
@@ -1732,7 +2055,12 @@ _Reply 'menu' to go back._`,
 
     if (session.stage === "shop_confirm") {
       if (body === "1" || body === "confirm" || body.includes("confirm")) {
-        const draft = session.orderDraft;
+        const draft = session.context.orderDraft || session.orderDraft;
+        if (!draft) {
+             session.stage = "menu";
+             await sendAndLog(from, "Session expired. Please start order again. Reply 'menu'.");
+             return res.end();
+        }
         const orderId = `ORD-${Date.now().toString().slice(-6)}-${Math.floor(
           Math.random() * 1000
         )}`;
@@ -1780,6 +2108,8 @@ Reply 'menu' to return.`,
           }
         );
         session.stage = "menu";
+        await mysqlPool.query("UPDATE tbl_chat_sessions SET stage = 'menu', last_message_at = NOW() WHERE phone = ?", [from]);
+
         try {
           const { upsertDocuments } = require("../utils/rag");
           await upsertDocuments(

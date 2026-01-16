@@ -322,6 +322,26 @@ Thank you for choosing Sachetan Packaging! We will process your order shortly.`,
         }
       );
 
+      const adminWhatsAppList = process.env.ADMIN_WHATSAPP
+        ? process.env.ADMIN_WHATSAPP.split(',').map(num => num.trim())
+        : [];
+      if (adminWhatsAppList.length > 0) {
+        const adminMessage = `📢 New Order Paid
+
+📞 User: ${order.whatsapp}
+🆔 Order: ${order.orderId || order._id}
+📄 Invoice: ${order.invoiceNumber}
+💰 Total: ₹${order.totalAmount}
+📥 Receipt: ${receiptLink}`;
+        for (const admin of adminWhatsAppList) {
+          try {
+            await sendWhatsApp(admin, adminMessage);
+          } catch (err) {
+            console.error(`Failed to send WhatsApp to admin ${admin}:`, err.message);
+          }
+        }
+      }
+
       return res.json({ success: true });
     } else {
       return res.status(400).json({ error: "Signature verification failed" });
@@ -507,6 +527,25 @@ router.post("/product/verify", async (req, res) => {
     if (order.whatsapp) {
       const message = `✅ *Order Confirmed!*\n\n🧾 Invoice: ${order.invoiceNumber || "-"}\n💵 Amount: ₹${order.totalAmount}\n📦 Items:\n${order.items.map(i => `• ${i.name} x${i.quantity} - ₹${i.total}`).join("\n")}\n\nView your receipt: ${receiptUrl}\n\nThank you for shopping with Sachetan Packaging! Reply 'menu' to return to main menu.`;
       await sendWhatsApp(order.whatsapp, message);
+    }
+    const adminWhatsAppList = process.env.ADMIN_WHATSAPP
+      ? process.env.ADMIN_WHATSAPP.split(',').map(num => num.trim())
+      : [];
+    if (adminWhatsAppList.length > 0) {
+      const adminMessage = `📢 New Order Paid
+
+📞 User: ${order.whatsapp}
+🆔 Order: ${order.orderId || order._id}
+📄 Invoice: ${order.invoiceNumber || "-"}
+💰 Total: ₹${order.totalAmount}
+📥 Receipt: ${receiptUrl}`;
+      for (const admin of adminWhatsAppList) {
+        try {
+          await sendWhatsApp(admin, adminMessage);
+        } catch (err) {
+          console.error(`Failed to send WhatsApp to admin ${admin}:`, err.message);
+        }
+      }
     }
     res.json({ success: true, order: { id: order._id, status: order.status, receiptUrl } });
   } catch (e) {
