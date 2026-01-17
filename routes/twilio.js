@@ -16,8 +16,8 @@ const axios = require("axios");
 const sharp = require("sharp");
 const twilio = require("twilio");
 
-const client = (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) 
-  ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN) 
+const client = (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN)
+  ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
   : null;
 
 // Helper to download media
@@ -138,7 +138,7 @@ async function ensureSessionTable() {
         ALTER TABLE tbl_chat_sessions
         ADD COLUMN user_type VARCHAR(50) NULL
       `);
-    } catch (e) {}
+    } catch (e) { }
 
     // Chat History Table
     await mysqlPool.query(`
@@ -522,7 +522,7 @@ router.post("/", async (req, res) => {
   try {
     const from = req.body.From;
     let body = (req.body.Body || "").trim().toLowerCase();
-    
+
     // 0. Rate Limiting (10 msgs per 60s)
     const now = Date.now();
     if (!rateLimit.has(from)) rateLimit.set(from, []);
@@ -552,13 +552,13 @@ router.post("/", async (req, res) => {
         isManual = true;
       }
     } catch (e) {
-        console.error("DB Check Error:", e);
+      console.error("DB Check Error:", e);
     }
 
     if (isManual) {
-        // Update timestamp only, keep stage manual
-        await mysqlPool.query("UPDATE tbl_chat_sessions SET last_message_at = NOW() WHERE phone = ?", [from]);
-        return res.end();
+      // Update timestamp only, keep stage manual
+      await mysqlPool.query("UPDATE tbl_chat_sessions SET last_message_at = NOW() WHERE phone = ?", [from]);
+      return res.end();
     }
 
     // 3. Update Session Timestamp for Bot (only if not manual)
@@ -579,7 +579,7 @@ router.post("/", async (req, res) => {
           let dbContext = {};
           try {
             if (rows[0].context) dbContext = JSON.parse(rows[0].context);
-          } catch (e) {}
+          } catch (e) { }
 
           sessions[from] = { stage: dbStage, context: dbContext };
           if (dbType) sessions[from].userType = dbType;
@@ -614,7 +614,7 @@ router.post("/", async (req, res) => {
         // Update Session Context with Media URL
         session.context = session.context || {};
         session.context.mediaUrl = localMediaUrl;
-        
+
         // Persist context update
         await mysqlPool.query("UPDATE tbl_chat_sessions SET context = ? WHERE phone = ?", [JSON.stringify(session.context), from]);
 
@@ -622,27 +622,27 @@ router.post("/", async (req, res) => {
         await logChatToDB(from, 'user', '[Media Upload]', localMediaUrl, req.body.MessageSid, req.body.SmsStatus || 'received');
 
         if (session.stage === 'custom_solutions') {
-             await sendAndLog(from, "✅ Image received. Analyzing...");
-             // Allow flow to proceed to custom_solutions logic
-             // If body is empty, set a placeholder so greeting checks etc don't crash
-             if (!req.body.Body) {
-                 req.body.Body = "I sent an image.";
-                 body = "i sent an image.";
-             }
+          await sendAndLog(from, "✅ Image received. Analyzing...");
+          // Allow flow to proceed to custom_solutions logic
+          // If body is empty, set a placeholder so greeting checks etc don't crash
+          if (!req.body.Body) {
+            req.body.Body = "I sent an image.";
+            body = "i sent an image.";
+          }
         } else {
-            await sendAndLog(from, "✅ We have received your file. Our team will review it and get back to you with a customized solution.");
-            
-            await logConversation({
-              phone: from,
-              name: router.sessions?.[from]?.sales?.name || "User Media",
-              city: router.sessions?.[from]?.sales?.city || "Unknown",
-              stage: "media_upload",
-              message: `[Media Upload] ${localMediaUrl}`,
-              reply: "File received",
-              mediaUrl: localMediaUrl
-            });
+          await sendAndLog(from, "✅ We have received your file. Our team will review it and get back to you with a customized solution.");
 
-            return res.end();
+          await logConversation({
+            phone: from,
+            name: router.sessions?.[from]?.sales?.name || "User Media",
+            city: router.sessions?.[from]?.sales?.city || "Unknown",
+            stage: "media_upload",
+            message: `[Media Upload] ${localMediaUrl}`,
+            reply: "File received",
+            mediaUrl: localMediaUrl
+          });
+
+          return res.end();
         }
       } catch (e) {
         console.error("Media download failed:", e);
@@ -676,16 +676,16 @@ router.post("/", async (req, res) => {
     // INTELLIGENT EXCEPTION:
     // If user says "I want..." but is already in 'custom_solutions', treat it as data, not a reset.
     if (session.stage === 'custom_solutions') {
-        if (body.startsWith("i want") || body.startsWith("i need") || body.startsWith("interested")) {
-            isGreeting = false;
-        }
+      if (body.startsWith("i want") || body.startsWith("i need") || body.startsWith("interested")) {
+        isGreeting = false;
+      }
     }
 
     if (isGreeting || isMenu) {
       // Reset Session
       session.stage = "menu";
       session.context = {}; // Clear context on full reset? Or keep it? "Menu" usually implies fresh start.
-      
+
       await mysqlPool.query("INSERT INTO tbl_chat_sessions (phone, stage, context) VALUES (?, 'menu', '{}') ON DUPLICATE KEY UPDATE stage = 'menu', last_message_at = NOW()", [from]);
 
       // Only send logo and full welcome for greetings (not for menu/back)
@@ -733,7 +733,7 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
         session.stage = "custom_solutions";
         try {
           await mysqlPool.query("INSERT INTO tbl_chat_sessions (phone, stage, user_type) VALUES (?, 'custom_solutions', ?) ON DUPLICATE KEY UPDATE stage='custom_solutions', user_type=VALUES(user_type), last_message_at=NOW()", [from, type]);
-        } catch {}
+        } catch { }
         await sendAndLog(from, `✅ You selected: *${type}*
 
 To help you better, please share:
@@ -767,78 +767,78 @@ _Reply with a number to proceed._`,
     if (session.stage === "custom_solutions") {
       let queryText = body;
       const currentContext = session.context || {};
-      
+
       // 1. Lead Collection (Name & City)
       if (!currentContext.name || !currentContext.city) {
         // If we already asked, this message is the answer
         if (currentContext.askingForDetails) {
-             let name = body;
-             let city = "Unknown";
-             const cleanBody = body.replace(/my name is/i, "").replace(/i am/i, "").trim();
-             
-             if (cleanBody.includes(",")) {
-                 const parts = cleanBody.split(",");
-                 name = parts[0].trim();
-                 city = parts.slice(1).join(" ").trim();
-             } else if (cleanBody.toLowerCase().includes(" from ")) {
-                 const parts = cleanBody.toLowerCase().split(" from ");
-                 name = parts[0].trim();
-                 city = parts[1].trim();
-             } else {
-                 name = cleanBody; 
-             }
-             
-             // Capitalize
-             name = name.replace(/\b\w/g, l => l.toUpperCase());
-             city = city.replace(/\b\w/g, l => l.toUpperCase());
+          let name = body;
+          let city = "Unknown";
+          const cleanBody = body.replace(/my name is/i, "").replace(/i am/i, "").trim();
 
-             currentContext.name = name;
-             currentContext.city = city;
-             delete currentContext.askingForDetails;
-             
-             const originalQuery = currentContext.pendingQuery || "";
-             delete currentContext.pendingQuery;
+          if (cleanBody.includes(",")) {
+            const parts = cleanBody.split(",");
+            name = parts[0].trim();
+            city = parts.slice(1).join(" ").trim();
+          } else if (cleanBody.toLowerCase().includes(" from ")) {
+            const parts = cleanBody.toLowerCase().split(" from ");
+            name = parts[0].trim();
+            city = parts[1].trim();
+          } else {
+            name = cleanBody;
+          }
 
-             // Log Lead
-             await logLead({
-                 phone: from,
-                 name: name,
-                 city: city,
-                 converted: false
-             });
-             
-             await sendAndLog(from, `Thanks ${name.split(' ')[0]}! 😊, Just a moment… I'm preparing the best options for you 🧠✨`);
-             
-             if (originalQuery) {
-                 queryText = originalQuery; // Use the original question for AI
-             } else {
-                 await sendAndLog(from, "What product are you looking for today? 📦");
-                 session.context = currentContext;
-                 await mysqlPool.query("UPDATE tbl_chat_sessions SET context = ?, last_message_at = NOW() WHERE phone = ?", [JSON.stringify(currentContext), from]);
-                 return res.end();
-             }
+          // Capitalize
+          name = name.replace(/\b\w/g, l => l.toUpperCase());
+          city = city.replace(/\b\w/g, l => l.toUpperCase());
+
+          currentContext.name = name;
+          currentContext.city = city;
+          delete currentContext.askingForDetails;
+
+          const originalQuery = currentContext.pendingQuery || "";
+          delete currentContext.pendingQuery;
+
+          // Log Lead
+          await logLead({
+            phone: from,
+            name: name,
+            city: city,
+            converted: false
+          });
+
+          await sendAndLog(from, `Thanks ${name.split(' ')[0]}! 😊, Just a moment… I'm preparing the best options for you 🧠✨`);
+
+          if (originalQuery) {
+            queryText = originalQuery; // Use the original question for AI
+          } else {
+            await sendAndLog(from, "What product are you looking for today? 📦");
+            session.context = currentContext;
+            await mysqlPool.query("UPDATE tbl_chat_sessions SET context = ?, last_message_at = NOW() WHERE phone = ?", [JSON.stringify(currentContext), from]);
+            return res.end();
+          }
         } else {
-             // First time asking
-             currentContext.askingForDetails = true;
-             currentContext.pendingQuery = body; // Save current message
-             
-             session.context = currentContext;
-             await mysqlPool.query("UPDATE tbl_chat_sessions SET context = ?, last_message_at = NOW() WHERE phone = ?", [JSON.stringify(currentContext), from]);
-             
-             await sendAndLog(from, "To generate a proper quotation, could you please share your **Full Name and City**? 🏙️\n\n_Example: Rahul Patil, Nashik_");
-             return res.end();
+          // First time asking
+          currentContext.askingForDetails = true;
+          currentContext.pendingQuery = body; // Save current message
+
+          session.context = currentContext;
+          await mysqlPool.query("UPDATE tbl_chat_sessions SET context = ?, last_message_at = NOW() WHERE phone = ?", [JSON.stringify(currentContext), from]);
+
+          await sendAndLog(from, "To generate a proper quotation, could you please share your **Full Name and City**? 🏙️\n\n_Example: Rahul Patil, Nashik_");
+          return res.end();
         }
       }
 
       // 2. Prepare Prompt
       const contextString = JSON.stringify(currentContext, null, 2);
-      
+
       // SEND IMMEDIATE 200 OK TO TWILIO TO PREVENT TIMEOUT
       // AND MARK AS READ IF POSSIBLE
       res.status(200).end();
 
       if (client && req.body.MessageSid) {
-          client.messages(req.body.MessageSid).update({status: 'read'}).catch(e => console.error("Read status failed", e.message));
+        client.messages(req.body.MessageSid).update({ status: 'read' }).catch(e => console.error("Read status failed", e.message));
       }
 
       const systemPrompt = `You are a trained packaging sales executive for Sachetan Packaging.
@@ -1005,12 +1005,12 @@ Current Context: ${contextString}
         // 3. Query RAG (Search for product info/rates)
         // We use the user's message + current product context to find relevant rates
         const searchTerms = queryText + " " + (currentContext.product || "");
-        
+
         // FILTER BY USER TYPE
         const filter = session.userType ? { type: session.userType } : {};
-        
+
         const ragResponse = await queryRag(searchTerms, 3, "website_docs", filter, false, systemPrompt);
-        
+
         let reply = ragResponse.answer;
         let newContext = currentContext;
 
@@ -1050,10 +1050,10 @@ Current Context: ${contextString}
                     const rate =
                       Number(
                         it.rate ||
-                          it.price ||
-                          it.ratePerPiece ||
-                          it.rate_per_piece ||
-                          it.pricePerUnit
+                        it.price ||
+                        it.ratePerPiece ||
+                        it.rate_per_piece ||
+                        it.pricePerUnit
                       ) || 0;
                     let total = Number(it.total || 0);
                     if (!total && qty && rate) {
@@ -1084,8 +1084,8 @@ Current Context: ${contextString}
                 const rate =
                   Number(
                     newContext.quotedRate ||
-                      newContext.rate ||
-                      newContext.pricePerUnit
+                    newContext.rate ||
+                    newContext.pricePerUnit
                   ) || 0;
                 let total = Number(newContext.total || 0);
                 if (!total && qty && rate) {
@@ -1126,15 +1126,15 @@ Current Context: ${contextString}
                 .getDate()
                 .toString()
                 .padStart(2, "0")}${now
-                .getHours()
-                .toString()
-                .padStart(2, "0")}${now
-                .getMinutes()
-                .toString()
-                .padStart(2, "0")}${now
-                .getSeconds()
-                .toString()
-                .padStart(2, "0")}`;
+                  .getHours()
+                  .toString()
+                  .padStart(2, "0")}${now
+                    .getMinutes()
+                    .toString()
+                    .padStart(2, "0")}${now
+                      .getSeconds()
+                      .toString()
+                      .padStart(2, "0")}`;
               const randomSuffix = Math.floor(Math.random() * 1000)
                 .toString()
                 .padStart(3, "0");
@@ -1231,15 +1231,15 @@ Please follow up with this confirmed quotation.`;
         // Use sendSplitMessage to handle long quotations safely
         await sendSplitMessage(from, reply);
         if (ragResponse.mediaUrls && ragResponse.mediaUrls.length > 0) {
-            // Send first media if available
-             await sendAndLog(from, "", { mediaUrl: ragResponse.mediaUrls[0] });
+          // Send first media if available
+          await sendAndLog(from, "", { mediaUrl: ragResponse.mediaUrls[0] });
         }
 
         // 6. Admin Notification for Quotation
         if (reply.includes("📄 Quotation – Sachetan Packaging")) {
-             const adminNumbers = (process.env.ADMIN_WHATSAPP || "").split(",").map(n => n.trim()).filter(Boolean);
-             if (adminNumbers.length > 0) {
-                 const alertMsg = `📢 *New Quotation Generated!*
+          const adminNumbers = (process.env.ADMIN_WHATSAPP || "").split(",").map(n => n.trim()).filter(Boolean);
+          if (adminNumbers.length > 0) {
+            const alertMsg = `📢 *New Quotation Generated!*
                  
 👤 *Customer:* ${currentContext.name || "Unknown"}
 📞 *Phone:* ${from}
@@ -1249,21 +1249,21 @@ ${reply}
 
 _Please follow up with this lead._`;
 
-                 // Append User Media to Admin Alert if available
-                 if (currentContext.mediaUrl) {
-                     alertMsg += `\n\n📷 *User Media:* ${currentContext.mediaUrl}`;
-                 }
-                 
-                 for (const adminNum of adminNumbers) {
-                     let target = adminNum;
-                     if (!target.startsWith("whatsapp:")) target = "whatsapp:" + target;
-                     try {
-                        await sendAndLog(target, alertMsg);
-                     } catch (err) {
-                        console.error(`Failed to send admin alert to ${target}:`, err.message);
-                     }
-                 }
-             }
+            // Append User Media to Admin Alert if available
+            if (currentContext.mediaUrl) {
+              alertMsg += `\n\n📷 *User Media:* ${currentContext.mediaUrl}`;
+            }
+
+            for (const adminNum of adminNumbers) {
+              let target = adminNum;
+              if (!target.startsWith("whatsapp:")) target = "whatsapp:" + target;
+              try {
+                await sendAndLog(target, alertMsg);
+              } catch (err) {
+                console.error(`Failed to send admin alert to ${target}:`, err.message);
+              }
+            }
+          }
         }
 
         // 7. Update DB
@@ -1427,21 +1427,23 @@ Reply with 'menu' to return to main menu.`;
       } else if (body.includes("contact") || body.includes("admin")) {
         await sendAndLog(
           from,
-          `📞 *Contact NashikPicklers Admin*
+          `🏢 *Contact & Support*
 
-For urgent matters:
-📱 Call: +91-8862084297
+📍 *Address:*
+Plot No. J30, Near Jai Malhar Hotel, 
+MIDC, Sinnar 422106
 
-For general inquiries:
-📧 Email: nashikpicklers@gmail.com
+📞 *Phone:*
+• +91 92263 22231
+• +91 84460 22231
 
-📍 Location: https://maps.app.goo.gl/GmZp2m2pMo3LFGJy9?g_st=awb
+📧 *Email:*
+sagar9994@rediffmail.com
 
-⏰ *Operating Hours:*
-Monday-Friday: 9:00 AM - 6:00 PM
-Weekends: 10:00 AM - 4:00 PM
+🌐 *Website:*
+https://sachetanpackaging.in
 
-Reply with 'menu' to return to main menu.`
+Reply 'menu' to return to main menu.`
         );
         return res.end();
       } else if (
@@ -1499,12 +1501,12 @@ Reply with a number or option name.`
         // but just in case, we redirect to menu logic if it looks like one.
         const lowerBody = body.toLowerCase();
         if (
-          lowerBody === "hi" || lowerBody === "hello" || lowerBody === "menu" || lowerBody === "start" || 
+          lowerBody === "hi" || lowerBody === "hello" || lowerBody === "menu" || lowerBody === "start" ||
           lowerBody.includes("menu") || lowerBody.includes("thank")
         ) {
-           // Redirect to menu logic by setting session and re-processing (or just sending menu directly)
-           // Here we just send the menu to be safe
-            await sendAndLog(
+          // Redirect to menu logic by setting session and re-processing (or just sending menu directly)
+          // Here we just send the menu to be safe
+          await sendAndLog(
             from,
             `🌟 *Welcome to Sachetan Packaging*
 _Quality Packaging Solutions Since 2011_
@@ -1542,12 +1544,12 @@ We are a premier organization engaged in manufacturing and supplying a wide asso
 
           // If strict mode and answer indicates failure, prompt to re-initiate
           if (strict && (
-              !answer || 
-              answer.includes("I'm not sure") || 
-              answer.includes("couldn't find information") ||
-              !result.context // If no context found in strict mode
+            !answer ||
+            answer.includes("I'm not sure") ||
+            answer.includes("couldn't find information") ||
+            !result.context // If no context found in strict mode
           )) {
-             await sendAndLog(from, `I couldn't find specific information for *${session.userType}* regarding your query.
+            await sendAndLog(from, `I couldn't find specific information for *${session.userType}* regarding your query.
 
 However, our support team is ready to help you!
 
@@ -1564,10 +1566,10 @@ Would you like to search in another category?
 *3️⃣ Sweet Shop Owner*
 
 _Reply with a number to proceed._`);
-             
-             // Reset stage to allow selection
-             session.stage = "select_user_type";
-             return res.end();
+
+            // Reset stage to allow selection
+            session.stage = "select_user_type";
+            return res.end();
           }
 
           if (!answer) answer = "I'm not sure about that. Reply 'menu' to see options.";
@@ -1917,7 +1919,7 @@ _Reply 'menu' to go back._`,
       // Ask for Customer Details
       session.stage = "ask_name";
       await mysqlPool.query("UPDATE tbl_chat_sessions SET stage = ?, context = ?, last_message_at = NOW() WHERE phone = ?", ["ask_name", JSON.stringify(session.context), from]);
-      
+
       await sendAndLog(from, "👤 *Please enter your Full Name:*");
       return res.end();
     }
@@ -1969,16 +1971,16 @@ _Reply 'menu' to go back._`,
 
       const draft = session.context.orderDraft || session.orderDraft;
       if (!draft) {
-          // Recover if lost, or reset
-          session.stage = "menu";
-          await sendAndLog(from, "Session expired. Please start order again. Reply 'menu'.");
-          return res.end();
+        // Recover if lost, or reset
+        session.stage = "menu";
+        await sendAndLog(from, "Session expired. Please start order again. Reply 'menu'.");
+        return res.end();
       }
       draft.customerName = body;
       session.context.orderDraft = draft;
       session.stage = "ask_address";
       await mysqlPool.query("UPDATE tbl_chat_sessions SET stage = ?, context = ?, last_message_at = NOW() WHERE phone = ?", ["ask_address", JSON.stringify(session.context), from]);
-      
+
       await sendAndLog(from, "📍 *Please enter your Delivery Address:*");
       return res.end();
     }
@@ -1986,9 +1988,9 @@ _Reply 'menu' to go back._`,
     if (session.stage === "ask_address") {
       const draft = session.context.orderDraft || session.orderDraft;
       if (!draft) {
-          session.stage = "menu";
-          await sendAndLog(from, "Session expired. Please start order again. Reply 'menu'.");
-          return res.end();
+        session.stage = "menu";
+        await sendAndLog(from, "Session expired. Please start order again. Reply 'menu'.");
+        return res.end();
       }
       draft.address = body;
       session.context.orderDraft = draft;
@@ -2002,9 +2004,9 @@ _Reply 'menu' to go back._`,
     if (session.stage === "ask_pincode") {
       const draft = session.context.orderDraft || session.orderDraft;
       if (!draft) {
-          session.stage = "menu";
-          await sendAndLog(from, "Session expired. Please start order again. Reply 'menu'.");
-          return res.end();
+        session.stage = "menu";
+        await sendAndLog(from, "Session expired. Please start order again. Reply 'menu'.");
+        return res.end();
       }
       draft.pincode = body;
       session.context.orderDraft = draft;
@@ -2057,9 +2059,9 @@ _Reply 'menu' to go back._`,
       if (body === "1" || body === "confirm" || body.includes("confirm")) {
         const draft = session.context.orderDraft || session.orderDraft;
         if (!draft) {
-             session.stage = "menu";
-             await sendAndLog(from, "Session expired. Please start order again. Reply 'menu'.");
-             return res.end();
+          session.stage = "menu";
+          await sendAndLog(from, "Session expired. Please start order again. Reply 'menu'.");
+          return res.end();
         }
         const orderId = `ORD-${Date.now().toString().slice(-6)}-${Math.floor(
           Math.random() * 1000
@@ -2181,7 +2183,7 @@ Reply 'menu' to return.`,
         await sendAndLog(from, "Cancelled. Reply 'menu' to see options.");
         return res.end();
       }
-      
+
       session.sales = session.sales || {};
       session.sales.name = (req.body.Body || "").trim();
       session.stage = "custom_solutions_ask_city";
@@ -2219,26 +2221,26 @@ Reply 'menu' to return.`,
 
       session.sales.pincode = (req.body.Body || "").trim();
       session.stage = "custom_solutions";
-      
+
       await sendAndLog(from, "✅ Thanks! We have updated your profile.\n\nHow else can I help you today?");
-      
+
       // Log complete lead
       try {
         await logLead({
-            phone: from,
-            name: session.sales.name,
-            city: session.sales.city,
-            pincode: session.sales.pincode,
-            product: "Profile Update",
-            size: "",
-            paper: "",
-            quantity: "",
-            printing: "",
-            notes: "User provided full details via chat flow",
-            converted: true,
-          });
+          phone: from,
+          name: session.sales.name,
+          city: session.sales.city,
+          pincode: session.sales.pincode,
+          product: "Profile Update",
+          size: "",
+          paper: "",
+          quantity: "",
+          printing: "",
+          notes: "User provided full details via chat flow",
+          converted: true,
+        });
       } catch (e) {
-          console.error("Error logging lead:", e);
+        console.error("Error logging lead:", e);
       }
       return res.end();
     }
@@ -2380,51 +2382,51 @@ Reply with a number.`
 
         // Enhanced Image Matching & Fallback Logic
         const isAskingForImage = /image|photo|pic|show|see|look|design|demo|sample/i.test(question);
-        
+
         if (result.mediaUrls && result.mediaUrls.length > 0) {
           session.sentMediaUrls = session.sentMediaUrls || new Set();
-          
+
           // Extract significant terms from user query for filename matching
           const stopWords = ["i", "want", "need", "show", "me", "images", "photos", "pics", "of", "the", "a", "an", "for", "in", "is", "are", "please", "can", "you", "give", "send"];
           const queryTerms = question.toLowerCase()
-              .replace(/[^\w\s]/g, "") // remove punctuation
-              .split(/\s+/)
-              .filter(w => !stopWords.includes(w) && w.length > 2);
+            .replace(/[^\w\s]/g, "") // remove punctuation
+            .split(/\s+/)
+            .filter(w => !stopWords.includes(w) && w.length > 2);
 
           let mediaToSend = [];
 
           if (queryTerms.length > 0) {
-              // Try to find specific matches in filenames
-              const matches = result.mediaUrls.filter(url => {
-                  const filename = url.split("/").pop().toLowerCase();
-                  return queryTerms.some(term => filename.includes(term));
-              });
-              
-              if (matches.length > 0) {
-                  mediaToSend = matches;
-              } else if (isAskingForImage) {
-                  // Specific request ("cake base") but no filename match found in RAG results
-                  await sendAndLog(from, `I don't have a specific demo image for *"${queryTerms.join(" ")}"* handy right now.
+            // Try to find specific matches in filenames
+            const matches = result.mediaUrls.filter(url => {
+              const filename = url.split("/").pop().toLowerCase();
+              return queryTerms.some(term => filename.includes(term));
+            });
+
+            if (matches.length > 0) {
+              mediaToSend = matches;
+            } else if (isAskingForImage) {
+              // Specific request ("cake base") but no filename match found in RAG results
+              await sendAndLog(from, `I don't have a specific demo image for *"${queryTerms.join(" ")}"* handy right now.
                   
 However, our support team can share photos with you!
 📞 *Call/WhatsApp:* +91 92263 22231
 📧 *Email:* sagar9994@rediffmail.com
 
 _Please continue, I can still help with pricing and details!_`);
-              } else {
-                  // User didn't explicitly ask for image, and no specific match found.
-                  // Optionally send nothing, or send all? 
-                  // If RAG thought they were relevant, maybe we send them anyway if confidence is high?
-                  // For now, let's be conservative to avoid spamming irrelevant images.
-                  // But if query was "prices for box", RAG might return box images.
-                  // Let's send all if no specific terms conflicted? 
-                  // No, user wants "as per selection type product give image".
-                  // So strict matching is preferred.
-                  // If no strict match, we don't send media.
-              }
+            } else {
+              // User didn't explicitly ask for image, and no specific match found.
+              // Optionally send nothing, or send all? 
+              // If RAG thought they were relevant, maybe we send them anyway if confidence is high?
+              // For now, let's be conservative to avoid spamming irrelevant images.
+              // But if query was "prices for box", RAG might return box images.
+              // Let's send all if no specific terms conflicted? 
+              // No, user wants "as per selection type product give image".
+              // So strict matching is preferred.
+              // If no strict match, we don't send media.
+            }
           } else {
-              // Generic request ("show me images"), send all available from context
-              mediaToSend = result.mediaUrls;
+            // Generic request ("show me images"), send all available from context
+            mediaToSend = result.mediaUrls;
           }
 
           for (const mediaUrl of mediaToSend) {
@@ -2435,8 +2437,8 @@ _Please continue, I can still help with pricing and details!_`);
             }
           }
         } else if (isAskingForImage) {
-             // User asked for image, but RAG returned none
-             await sendAndLog(from, `I currently don't have a demo image for that available here.
+          // User asked for image, but RAG returned none
+          await sendAndLog(from, `I currently don't have a demo image for that available here.
 
 You can contact our support for specific photos:
 📞 +91 92263 22231
