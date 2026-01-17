@@ -226,7 +226,7 @@
               <ul class="text-sm text-blue-700 space-y-1 list-disc list-inside">
                 <li>Upload an <strong>Excel (.xlsx)</strong> or <strong>CSV</strong> file.</li>
                 <li>The file <strong>MUST</strong> have columns named <strong>Name</strong> and <strong>Contact Number</strong> (or similar).</li>
-                <li>Use <strong>{{name}}</strong> in your message to personalize it (e.g., "Hi {{name}}").</li>
+                <li>Write your personalized message in the textarea. Don't use {{name}} to insert the customer's name dynamically. Template already contains the name.</li>
               </ul>
             </div>
 
@@ -241,8 +241,8 @@
 
             <div>
               <label class="block text-sm font-semibold text-slate-700 mb-2">Message Content</label>
-              <textarea id="bulk-message" name="message" rows="6" class="w-full px-5 py-4 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition bg-slate-50 focus:bg-white" placeholder="Hi {{name}}, Check out our new collection!..." required></textarea>
-              <p class="text-xs text-slate-400 mt-1">Tip: Use {{name}} to insert the customer's name dynamically.</p>
+              <textarea id="bulk-message" name="message" rows="6" class="w-full px-5 py-4 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition bg-slate-50 focus:bg-white" placeholder="Check out our new collection!..." required></textarea>
+              <p class="text-xs text-slate-400 mt-1">Tip: Don't Use {{name}} to insert the customer's name dynamically template already contains the name.</p>
             </div>
 
             <div>

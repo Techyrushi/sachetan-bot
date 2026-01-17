@@ -552,12 +552,45 @@ router.post("/bulk-message", auth, upload.fields([{ name: "file", maxCount: 1 },
             // Replace {{name}} with Name
             const nameKey = Object.keys(contact).find(k => k.includes("name"));
             const name = nameKey ? contact[nameKey] : "Customer";
-            
             personalizedMessage = personalizedMessage.replace(/{{name}}/gi, name);
 
-            // Send
+            // Twilio Content Variables rules:
+            // - Variables cannot contain newlines/tabs or be empty/null.
+            // - So we sanitize the dynamic text to a single-line string.
+            const sanitizedMessage = String(personalizedMessage || "")
+              .replace(/\s+/g, " ")
+              .trim();
+            const safeName = String(name || "Customer").trim() || "Customer";
+            // We will not use a separate template variable for media to keep
+            // variable count simple and aligned with the template (only {{1}} and {{2}})
+
+            // Send (prefer WhatsApp Template if configured, to avoid 24h session limit issues)
             try {
-                await sendWhatsApp(to, personalizedMessage, { mediaUrl });
+                const options = {};
+                if (mediaUrl) {
+                  options.mediaUrl = mediaUrl;
+                }
+
+                const bulkTemplateSid = process.env.TWILIO_CONTENT_SID_BULK;
+                let bodyToSend = personalizedMessage;
+
+                if (bulkTemplateSid) {
+                  options.contentSid = bulkTemplateSid;
+                  options.contentVariables = {
+                    "1": safeName,
+                    "2": sanitizedMessage || "-",
+                  };
+                  bodyToSend = "";
+                }
+
+                await sendWhatsApp(to, bodyToSend, options);
+                if (mediaUrl && bulkTemplateSid) {
+                  try {
+                    await sendWhatsApp(to, "", { mediaUrl });
+                  } catch (mediaErr) {
+                    console.error(`Failed to send media to ${to}:`, mediaErr.message);
+                  }
+                }
                 await pool.query(
                     "INSERT INTO tbl_chat_history (phone, sender, message, media_url, created_at) VALUES (?, 'admin_bulk', ?, ?, NOW())", 
                     [to, personalizedMessage, mediaUrl]
