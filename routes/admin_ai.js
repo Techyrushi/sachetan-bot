@@ -269,7 +269,7 @@ router.put("/documents/:id", auth, upload.array("images", 10), async (req, res) 
     }
 
     // Update MySQL
-    await pool.query("UPDATE tbl_ai_knowledge SET title = ?, content = ? WHERE id = ?", [title, updatedContent, id]);
+    await pool.query("UPDATE tbl_ai_knowledge SET title = ?, content = ?, source_type = ? WHERE id = ?", [title, updatedContent, source_type, id]);
 
     // Update Pinecone (Upsert overwrites)
     await upsertDocuments([{ id: doc_id, text: updatedContent, metadata }]);
