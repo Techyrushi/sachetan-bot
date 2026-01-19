@@ -899,90 +899,42 @@ Never say “I don’t understand” — infer intent.
    - Apply this logic consistently.
 
 3. Price Consistency Rule:
-   - Once a rate is quoted (e.g. ₹6.50), YOU MUST LOCK IT.
-   - In the "Confirmation" message, use the EXACT SAME RATE as the quotation.
-   - Do NOT revert to a higher price after the user says "Yes".
-   - Check the "Quoted Rate" in the context before generating the final confirmation.
+   - Calculate rates based on the rules.
+   - You MAY show the calculated rates to the user.
 
-🧾 Professional Quotation Format
-Whenever user asks price, you must respond in one of these formats:
+✅ QUOTATION DISPLAY:
+- You ARE allowed to show the calculated price/quotation to the user.
+- HOWEVER, you MUST append the following disclaimer message to EVERY quotation:
 
-Single Item:
-📄 Quotation – Sachetan Packaging
-Product: {Product Name}
-Size: {Size}
-Material: {Material or Standard Food Grade}
-Print: {Plain / Printed}
-Quantity: {Qty}
-Reference Image: {Yes/No - if mediaUrl exists}
+   "💰 *Estimated Quote:* [Insert Price Details]
 
-Rate: ₹{rate per piece} ({(Bulk/Standard) Rate applied})
-Subtotal: ₹{qty × rate}
-GST (5%): ₹{gst}
---------------------------------
-Total Payable: ₹{final amount}
+   ⚠️ *Note:* This is an approximate rate. For a final quotation and potential bulk purchase discounts, please talk to our team or share your requirements. Our team member will contact you to give you the best quotation."
 
-Multi Item (for multiple sizes/shapes like MDF cake bases):
-📄 Quotation – Sachetan Packaging
-Customer Type: {Homebaker / Store Owner/ Bulk Buyer / Sweet Shop Owner}
-Product Type: {e.g. MDF Cake Base}
-
-Items:
-1) {Shape/Size/Color} – Qty {qty1} × ₹{rate1} = ₹{lineTotal1}
-2) {Shape/Size/Color} – Qty {qty2} × ₹{rate2} = ₹{lineTotal2}
-3) ...
-
-Subtotal: ₹{sum of all line totals}
-GST (5%): ₹{gst}
---------------------------------
-Total Payable: ₹{final amount}
-
-🚚 Transport: Extra (as per location)
-📍 Dispatch: Nashik
-⏳ Production Time: 5–7 working days
-
-📞 Support: +91 92263 22231 / +91 84460 22231
-📧 Email: sagar9994@rediffmail.com
-🌐 More Products: https://sachetanpackaging.in
-
-❓ Would you like to confirm this order? (Yes/No)
+🧾 Quotation Flow:
+When the user asks for price/rate/quotation, and you have sufficient details (Product, Size, Qty, etc.):
+1. Calculate the price internally based on the rules.
+2. Generate the <CONTEXT_JSON> with the full calculated details (rates, subtotal, gst, total) and set "status": "quotation_ready".
+3. Reply to the user with the calculated price details followed by the MANDATORY disclaimer above.
 
 🧮 4️⃣ Calculation Rules
 Always:
 1. Multiply quantity × rate = Subtotal
-2. GST = Subtotal × 0.05
+2. Determine GST Rate:
+   - IF User Type is "Store Owner/ Bulk Buyer" AND Product is "MDF Cake Base" (or contains "MDF"): GST = 18% (Subtotal × 0.18)
+   - ELSE: GST = 5% (Subtotal × 0.05)
 3. Total = Subtotal + GST
 4. Round Total to nearest rupee
 Never guess quantity.
 Never skip GST.
-If user changes quantity, recalculate instantly.
-If the calculation seems wrong, double-check it before replying.
 
-🤝 CONFIRMATION FLOW:
-If user says "Yes" / "Confirm" / "Ok" or any other language which similar to english words Yes, confirm, ok to confirm the order: 
-1. Reply with: "🎉 Thank you for confirming your order, {Name}! We're excited to serve you."
-2. Show Final Order Details using the EXACT SAME PRICES from the previous quotation.
-   - For single item: Product, Size, Qty, Rate, Subtotal, GST, Total
-   - For multiple items: list all line items with Qty × Rate = Line Total, plus Subtotal, GST, Total
-3. Append: "📞 Payment & Dispatch Coordination: Our team will call you shortly..."
-4. Append: "Reply 'menu' to start a new chat."
-5. Output <CONTEXT_JSON> with:
-   - "status": "confirmed"
-   - For single item: "product", "size", "material", "quantity", "quotedRate", "subtotal", "gst", "total"
-   - For multiple items: 
-       "items": [
-         { "name": "MDF Cake Base 7\" Round Gold", "size": "7\" Round", "color": "Gold", "quantity": 100, "rate": 6.5, "total": 650 },
-         { "name": "MDF Cake Base 9\" Round Gold", "size": "9\" Round", "color": "Gold", "quantity": 100, "rate": 8.5, "total": 850 }
-       ],
-       "subtotal": 1500,
-       "gst": 75,
-       "total": 1575
+🤝 LEAD HANDOFF:
+Once you have gathered the details and the user asks for price:
+1. Output the polite "Thank you" message.
+2. Output <CONTEXT_JSON> with:
+   - "status": "quotation_ready"
+   - "product", "size", "material", "quantity", "quotedRate", "subtotal", "gst", "total"
+   - For multiple items, include the "items" array with details.
    - Include "name" and "city" in the JSON if known.
-
-If user says "No" / "Cancel" / "Too high":
-1. Ask politely for the reason (Price? Delivery time?).
-2. Try to convince or offer alternatives (e.g. "We can offer a better rate for higher quantities!" or "We have a standard version available.").
-3. Be a helpful sales agent, try to convert the lead!
 
 STATE MANAGEMENT:
 You must extract the current Order Context from the conversation.
@@ -1037,7 +989,7 @@ Current Context: ${contextString}
             }
 
             let createdOrder = null;
-            const isConfirmed = newContext.status === "confirmed";
+            const isConfirmed = newContext.status === "confirmed" || newContext.status === "quotation_ready";
             const hasOrderId = !!newContext.orderId;
 
             if (isConfirmed && !hasOrderId) {
@@ -1111,7 +1063,13 @@ Current Context: ${contextString}
 
               let gst = Number(newContext.gst || 0);
               if (!gst && subtotal) {
-                gst = Math.round(subtotal * 0.05);
+                // GST Logic: 18% for Bulk Buyer + MDF products, else 5%
+                const isBulkBuyer = session.userType === "Store Owner/ Bulk Buyer";
+                const productName = (newContext.product || "").toLowerCase();
+                const isMDF = productName.includes("mdf") || productName.includes("base");
+                
+                const gstRate = (isBulkBuyer && isMDF) ? 0.18 : 0.05;
+                gst = Math.round(subtotal * gstRate);
               }
 
               let totalAmount =

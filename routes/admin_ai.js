@@ -9,6 +9,8 @@ const pool = require("../config/mysql");
 const sendWhatsApp = require("../utils/sendWhatsApp");
 const { upsertDocuments, deleteDocument } = require("../utils/rag");
 const auth = require("../middleware/auth");
+const PDFDocument = require("pdfkit");
+const { logQuotation } = require("../utils/sheets");
 
 // Configure Multer for file uploads
 const storage = multer.diskStorage({
@@ -617,6 +619,294 @@ router.post("/bulk-message", auth, upload.fields([{ name: "file", maxCount: 1 },
   } finally {
     // Cleanup uploaded contact list (keep attachment)
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath); 
+  }
+});
+
+// 13. GENERATE AND SEND QUOTATION
+router.post("/chat/quotation", auth, async (req, res) => {
+  const { phone, customerName, customerCity, items, gstRate, manualTotal } = req.body;
+
+  if (!phone || !items || !Array.isArray(items)) {
+    return res.status(400).json({ error: "Missing required fields" });
+  }
+
+  try {
+    const doc = new PDFDocument({ margin: 50 });
+    const filename = `quotation_${phone.replace(/[^0-9]/g, "")}_${Date.now()}.pdf`;
+    const filePath = path.join(__dirname, "../public/quotations", filename);
+    const writeStream = fs.createWriteStream(filePath);
+
+    doc.pipe(writeStream);
+
+    // --- PDF CONTENT GENERATION ---
+    const primaryColor = "#2E7D32"; // Eco Green
+    const secondaryColor = "#1B5E20"; // Darker Green
+    const accentColor = "#E8F5E9"; // Light Green Background
+    const greyColor = "#444444";
+    const lightGrey = "#f5f5f5";
+    const borderColor = "#dddddd";
+
+    // 1. Top Decorative Bar
+    doc.rect(0, 0, 612, 20).fill(primaryColor);
+
+    // 2. Header with Logo
+    const logoPath = path.join(__dirname, "../public/assets/sachetan_logo.png");
+    if (fs.existsSync(logoPath)) {
+        doc.image(logoPath, 50, 45, { width: 80 });
+    }
+
+    // 3. Business Header
+    doc.fillColor(primaryColor)
+       .fontSize(26)
+       .font("Helvetica-Bold")
+       .text("SACHETAN", 150, 50)
+       .fontSize(10)
+       .font("Helvetica")
+       .fillColor(secondaryColor)
+       .text("Eco-Friendly Packaging Solutions", 150, 78)
+       .moveDown(0.5);
+
+    doc.fillColor(greyColor)
+       .fontSize(9)
+       .text("Plot No. J30, Near Jai Malhar Hotel, MIDC, Sinnar 422106", 150, 95)
+       .text("Email: sagar9994@rediffmail.com", 150, 108)
+       .text("Ph: +91 92263 22231 | +91 84460 22231", 150, 121);
+       
+    doc.fillColor("#0000EE") // Link Blue
+       .font("Helvetica-Bold")
+       .text("Website: https://sachetanpackaging.in", 150, 134, { link: "https://sachetanpackaging.in", underline: true });
+
+    // 4. Quotation Title & Date Box
+    doc.rect(400, 45, 160, 60).fill(accentColor).stroke(primaryColor);
+    doc.fillColor(primaryColor)
+       .fontSize(18)
+       .font("Helvetica-Bold")
+       .text("QUOTATION", 400, 55, { width: 160, align: "center" });
+       
+    doc.fillColor("black")
+       .fontSize(10)
+       .font("Helvetica")
+       .text(`Date: ${new Date().toLocaleDateString()}`, 400, 80, { width: 160, align: "center" })
+       .text(`Ref: Q-${Date.now().toString().slice(-6)}`, 400, 95, { width: 160, align: "center" });
+
+    // 5. Customer Details Section
+    const customerBoxY = 170;
+    const customerBoxHeight = 85; // Increased height for dynamic content
+    doc.rect(50, customerBoxY, 512, customerBoxHeight).fill(lightGrey).stroke(borderColor);
+    doc.fillColor(secondaryColor)
+       .font("Helvetica-Bold")
+       .fontSize(11)
+       .text("Customer Details:", 60, customerBoxY + 10);
+       
+    let detailsY = customerBoxY + 30;
+    
+    // Name
+    doc.fillColor("black")
+       .font("Helvetica-Bold")
+       .fontSize(10)
+       .text(customerName || "Customer", 60, detailsY, { width: 400 });
+       
+    // Measure name height to avoid overlap
+    const nameHeight = doc.heightOfString(customerName || "Customer", { width: 400 });
+    detailsY += nameHeight + 5;
+
+    // City
+    doc.font("Helvetica").fontSize(10);
+    if (customerCity) {
+        doc.text(`City: ${customerCity}`, 60, detailsY);
+        detailsY += 15;
+    }
+    
+    // Phone
+    doc.text(`Phone: ${phone}`, 60, detailsY);
+
+    // 6. Table Header
+    const tableTop = customerBoxY + customerBoxHeight + 20; // 170 + 70 + 20 = 260
+    const itemX = 60;
+    const sizeX = 240;
+    const qtyX = 320;
+    const rateX = 390;
+    const amountX = 480;
+
+    doc.rect(50, tableTop, 512, 25).fill(primaryColor);
+    
+    doc.fillColor("white")
+       .font("Helvetica-Bold")
+       .fontSize(10)
+       .text("Item Description", itemX, tableTop + 7)
+       .text("Size", sizeX, tableTop + 7)
+       .text("Qty", qtyX, tableTop + 7)
+       .text("Rate", rateX, tableTop + 7)
+       .text("Amount", amountX, tableTop + 7);
+    
+    // 7. Items Loop
+    let y = tableTop + 30;
+    let subtotal = 0;
+
+    doc.fillColor("black").font("Helvetica").fontSize(10);
+
+    items.forEach((item, index) => {
+        const productName = item.name || item.product || "Product";
+        const size = item.size || "-";
+        const qty = Number(item.qty || item.quantity) || 0;
+        const rate = Number(item.rate) || 0;
+        const discount = Number(item.discount) || 0; 
+        
+        const lineAmount = (qty * rate) - discount;
+        const finalAmount = Math.max(0, lineAmount);
+        
+        subtotal += finalAmount;
+
+        // Alternating row background
+        if (index % 2 === 0) {
+            doc.rect(50, y - 5, 512, 20).fill("#f9f9f9");
+            doc.fillColor("black");
+        }
+
+        // Cell Borders (optional, let's keep it clean with just background)
+        // doc.rect(50, y - 5, 512, 20).stroke(borderColor);
+
+        doc.text(productName, itemX, y, { width: 170, lineBreak: false, ellipsis: true });
+        doc.text(size, sizeX, y);
+        doc.text(qty.toString(), qtyX, y);
+        doc.text(rate.toFixed(2), rateX, y);
+        doc.text(finalAmount.toFixed(2), amountX, y);
+        
+        y += 25;
+        
+        // Dynamic Page Break
+        if (y > 600) { // Reduced from 680 to prevent overlap with taller footer
+            doc.addPage();
+            // Re-draw top bar on new page
+            doc.rect(0, 0, 612, 20).fill(primaryColor);
+            y = 50; 
+            
+            // Re-draw table header on new page
+            doc.rect(50, y, 512, 25).fill(primaryColor);
+            doc.fillColor("white").font("Helvetica-Bold");
+            doc.text("Item Description", itemX, y + 7)
+               .text("Size", sizeX, y + 7)
+               .text("Qty", qtyX, y + 7)
+               .text("Rate", rateX, y + 7)
+               .text("Amount", amountX, y + 7);
+            doc.fillColor("black").font("Helvetica");
+            y += 30;
+        }
+    });
+
+    // Bottom Line for Table
+    doc.moveTo(50, y).lineTo(562, y).strokeColor(primaryColor).lineWidth(1).stroke();
+    y += 15;
+
+    // 8. Totals Section
+    if (y > 530) { // Adjusted threshold to ensure Totals move with Footer if space is tight
+        doc.addPage();
+        doc.rect(0, 0, 612, 20).fill(primaryColor);
+        y = 50;
+    }
+
+    const effectiveGstRate = gstRate > 1 ? gstRate / 100 : gstRate;
+    const gstAmount = subtotal * effectiveGstRate;
+    const calculatedTotal = subtotal + gstAmount;
+    const finalTotal = manualTotal || calculatedTotal;
+
+    const rightColX = 350;
+    const valColX = 460;
+
+    doc.font("Helvetica");
+    doc.text("Subtotal:", rightColX, y);
+    doc.text(subtotal.toFixed(2), valColX, y, { align: "right", width: 80 });
+    y += 18;
+    
+    doc.text(`GST (${(effectiveGstRate * 100).toFixed(0)}%):`, rightColX, y);
+    doc.text(gstAmount.toFixed(2), valColX, y, { align: "right", width: 80 });
+    y += 25;
+    
+    // Total Box
+    doc.rect(rightColX - 10, y - 8, 200, 30).fill(primaryColor);
+    doc.fillColor("white").font("Helvetica-Bold").fontSize(12);
+    doc.text("Total:", rightColX, y);
+    doc.text(`Rs. ${finalTotal.toFixed(2)}`, valColX - 20, y, { align: "right", width: 100 });
+    
+    // 9. Stylish Footer
+    const pageHeight = doc.page.height;
+    const footerHeight = 150; // Increased height to move footer up
+    const footerY = pageHeight - footerHeight;
+
+    // Check overlap
+    if (y > footerY - 20) {
+        doc.addPage();
+        doc.rect(0, 0, 612, 20).fill(primaryColor);
+    }
+
+    // Footer Background
+    doc.rect(0, footerY, 612, footerHeight).fill(accentColor);
+    
+    // Footer Content
+    const footerContentY = footerY + 20;
+    
+    doc.fillColor(secondaryColor).font("Helvetica-Bold").fontSize(10);
+    doc.text("Terms & Conditions:", 50, footerContentY);
+    
+    doc.fillColor(greyColor).font("Helvetica").fontSize(9);
+    const termSpacing = 15;
+    doc.text("1. Prices are valid for 7 days from the date of quotation.", 50, footerContentY + 20);
+    doc.text("2. 50% advance payment required for order confirmation.", 50, footerContentY + 20 + termSpacing);
+    doc.text("3. Goods once sold will not be taken back or exchanged.", 50, footerContentY + 20 + termSpacing * 2);
+    doc.text("4. Delivery subject to availability of stock.", 50, footerContentY + 20 + termSpacing * 3);
+
+    // Bottom Branding Bar
+    doc.rect(0, pageHeight - 25, 612, 25).fill(secondaryColor);
+    doc.fillColor("white").font("Helvetica-Bold").fontSize(9);
+    doc.text("Thank you for choosing Sachetan Packaging!", 0, pageHeight - 18, { align: "center" });
+
+    doc.end();
+
+    writeStream.on("finish", async () => {
+        // Send WhatsApp
+        // Use BASE_URL if available, otherwise assume local/ngrok needs configuration
+        const baseUrl = process.env.BASE_URL || "http://localhost:4000";
+        const publicUrl = `${baseUrl}/quotations/${filename}`;
+        
+        const message = `Dear ${customerName || "Customer"}, please find your quotation attached.`;
+        const to = normalizeWhatsAppNumber(phone);
+
+        if (!to) {
+            return res.status(400).json({ error: "Invalid phone number" });
+        }
+        
+        try {
+            await sendWhatsApp(to, message, { mediaUrl: publicUrl });
+            
+            // Log to Sheets
+            await logQuotation({
+                phone: to,
+                customerName,
+                totalAmount: finalTotal,
+                pdfUrl: publicUrl
+            });
+            
+            // Save to Chat History
+            await pool.query(
+                "INSERT INTO tbl_chat_history (phone, sender, message, media_url, created_at) VALUES (?, 'admin', ?, ?, NOW())", 
+                [to, "Sent Quotation PDF", publicUrl]
+            );
+
+            res.json({ success: true, url: publicUrl });
+        } catch (err) {
+            console.error("Error sending WhatsApp:", err);
+            res.status(500).json({ error: "Failed to send WhatsApp", details: err.message });
+        }
+    });
+
+    writeStream.on("error", (err) => {
+        console.error("Error generating PDF:", err);
+        res.status(500).json({ error: "Failed to generate PDF" });
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
   }
 });
 

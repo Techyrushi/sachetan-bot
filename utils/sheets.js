@@ -224,10 +224,24 @@ async function logUserMedia(phone, mediaUrl) {
   return appendRow(range, values);
 }
 
+async function logQuotation(data) {
+  const range = process.env.GOOGLE_SHEETS_QUOTATIONS_RANGE || "Quotations!A1";
+  await ensureHeaders(range, ["Timestamp", "Phone", "Customer Name", "Total Amount", "PDF URL"]);
+  const values = [
+    new Date().toISOString(),
+    data.phone || "",
+    data.customerName || "",
+    data.totalAmount || "",
+    data.pdfUrl || ""
+  ];
+  return appendRow(range, values);
+}
+
 module.exports = {
   logConversation,
   logLead,
   logUserMedia,
+  logQuotation,
   readRange: async (range) => {
     const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
     const sheets = getSheetsApi();
