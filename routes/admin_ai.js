@@ -650,7 +650,7 @@ router.post("/chat/quotation", auth, async (req, res) => {
     doc.rect(0, 0, 612, 20).fill(primaryColor);
 
     // 2. Header with Logo
-    const logoPath = path.join(__dirname, "../public/assets/sachetan_logo.png");
+    const logoPath = path.join(__dirname, "../public/assets/sachetan_logos.png");
     if (fs.existsSync(logoPath)) {
         doc.image(logoPath, 50, 45, { width: 80 });
     }
@@ -775,7 +775,7 @@ router.post("/chat/quotation", auth, async (req, res) => {
         y += 25;
         
         // Dynamic Page Break
-        if (y > 600) { // Reduced from 680 to prevent overlap with taller footer
+        if (y > 650) { // Increased threshold to allow more content per page
             doc.addPage();
             // Re-draw top bar on new page
             doc.rect(0, 0, 612, 20).fill(primaryColor);
@@ -799,7 +799,7 @@ router.post("/chat/quotation", auth, async (req, res) => {
     y += 15;
 
     // 8. Totals Section
-    if (y > 530) { // Adjusted threshold to ensure Totals move with Footer if space is tight
+    if (y > 610) { // Optimized threshold to fit Totals on same page if possible
         doc.addPage();
         doc.rect(0, 0, 612, 20).fill(primaryColor);
         y = 50;
