@@ -157,6 +157,16 @@ async function ensureSessionTable() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
 
+    // Migration: Expand sender enum to include admin/admin_bulk
+    try {
+      await mysqlPool.query(`
+        ALTER TABLE tbl_chat_history
+        MODIFY COLUMN sender ENUM('user','bot','admin','admin_bulk') NOT NULL
+      `);
+    } catch (e) {
+      // Ignore if already migrated or column type incompatible
+    }
+
     // Add message_sid column
     try {
       await mysqlPool.query(`

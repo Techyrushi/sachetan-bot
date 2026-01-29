@@ -881,9 +881,7 @@
         } else {
             let lastDate = null;
             messages.forEach(msg => {
-              const isManualAdmin = msg.sender === 'admin';
-              const isBot = ['bot', 'admin_bulk'].includes(msg.sender);
-              const isRight = isManualAdmin || isBot;
+              const style = styleForSender(msg.sender);
               
               const time = new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
               const date = new Date(msg.created_at).toLocaleDateString();
@@ -905,22 +903,14 @@
                  }
               }
 
-              let bubbleClass = 'bg-white text-slate-800 border border-slate-200 rounded-bl-none';
-              let timeClass = 'text-slate-400';
-              
-              if (isManualAdmin) {
-                  bubbleClass = 'bg-green-600 text-white rounded-br-none';
-                  timeClass = 'text-green-100 opacity-75';
-              } else if (isBot) {
-                  bubbleClass = 'bg-blue-600 text-white rounded-br-none';
-                  timeClass = 'text-blue-100 opacity-75';
-              }
-
               html += `
-                <div class="flex ${isRight ? 'justify-end' : 'justify-start'}">
-                    <div class="max-w-[75%] ${bubbleClass} rounded-2xl px-5 py-3 shadow-sm relative group">
+                <div class="flex ${style.right ? 'justify-end' : 'justify-start'}">
+                    <div class="max-w-[75%] ${style.bubbleClass} rounded-2xl px-5 py-3 shadow-sm relative group">
+                      <div class="flex items-center ${style.right ? 'justify-end' : 'justify-start'} -mt-1 mb-1">
+                        <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full ${style.tagClass}">${style.tagLabel}</span>
+                      </div>
                       ${contentHtml}
-                      <p class="text-[10px] ${timeClass} text-right mt-1">${time}</p>
+                      <p class="text-[10px] ${style.timeClass} ${style.right ? 'text-right' : 'text-left'} mt-1">${time}</p>
                     </div>
                 </div>
               `;
@@ -954,6 +944,58 @@
         return text.replace(urlRegex, function(url) {
             return '<a href="' + url + '" target="_blank" class="underline decoration-dotted hover:text-blue-300">' + url + '</a>';
         });
+    }
+
+    function styleForSender(sender) {
+        if (!sender) sender = "";
+        const s = sender.trim().toLowerCase();
+        
+        const isManualAdmin = s === 'admin';
+        const isBot = ['bot', 'admin_bulk'].includes(s);
+        const right = isManualAdmin || isBot;
+        
+        let bubbleClass = 'bg-white text-slate-800 border border-slate-200 rounded-bl-none';
+        let timeClass = 'text-slate-400';
+        let tagLabel = 'User';
+        let tagClass = 'bg-slate-100 text-slate-700';
+        
+        if (isManualAdmin) {
+            bubbleClass = 'bg-green-600 text-white rounded-br-none';
+            timeClass = 'text-green-100 opacity-75';
+            tagLabel = 'Admin';
+            tagClass = 'bg-green-100 text-green-700';
+        } else if (isBot) {
+            bubbleClass = 'bg-blue-600 text-white rounded-br-none';
+            timeClass = 'text-blue-100 opacity-75';
+            tagLabel = 'AI';
+            tagClass = 'bg-blue-100 text-blue-700';
+        }
+        return { right, bubbleClass, timeClass, tagLabel, tagClass };
+    }
+    
+    function runStyleTests() {
+        const cases = [
+            { sender: 'admin', expect: { right: true, bubble: 'green-600', tag: 'Admin' } },
+            { sender: 'bot', expect: { right: true, bubble: 'blue-600', tag: 'AI' } },
+            { sender: 'admin_bulk', expect: { right: true, bubble: 'blue-600', tag: 'AI' } },
+            { sender: 'user', expect: { right: false, bubble: 'white', tag: 'User' } },
+        ];
+        let pass = 0, fail = 0, details = [];
+        cases.forEach(c => {
+            const s = styleForSender(c.sender);
+            const okRight = s.right === c.expect.right;
+            const okColor = s.bubbleClass.includes(c.expect.bubble);
+            const okTag = s.tagLabel === c.expect.tag;
+            const ok = okRight && okColor && okTag;
+            if (ok) pass++; else fail++;
+            details.push(`${c.sender}: right=${okRight}, color=${okColor}, tag=${okTag}`);
+        });
+        const text = `Pass: ${pass}, Fail: ${fail}\n` + details.join('\n');
+        if (typeof Swal !== 'undefined') {
+            Swal.fire({ icon: fail ? 'warning' : 'success', title: 'Style Tests', text });
+        } else {
+            console.log('Style Tests\n' + text);
+        }
     }
 
     async function toggleManual() {
