@@ -549,6 +549,7 @@
     const API_BASE = "/api/admin/ai";
     const AUTH_URL = "/api/auth/login";
     const ADMIN_BASE = "/api/admin";
+    let chatRefreshInterval = null;
 
     // --- AUTH ---
     const originalFetch = window.fetch;
@@ -611,6 +612,10 @@
       document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
       const navItem = document.getElementById(`nav-${tabName}`);
       if(navItem) navItem.classList.add('active');
+
+      if (tabName !== 'chat') {
+        stopAutoRefresh();
+      }
 
       if (tabName === 'list') loadDocuments();
       if (tabName === 'chat') loadChatUsers();
@@ -789,19 +794,24 @@
       users.forEach(user => {
         const isActive = user.phone === currentChatPhone;
         const lastActive = new Date(user.last_message_at).toLocaleString();
+        const lastNotif = localStorage.getItem("lastNotificationTime");
+        const hasNew = lastNotif && new Date(user.last_message_at) > new Date(lastNotif);
         
         const div = document.createElement("div");
         div.className = `p-4 hover:bg-slate-50 cursor-pointer transition ${isActive ? 'bg-blue-50 border-l-4 border-blue-500' : ''}`;
         div.onclick = () => loadChatHistory(user.phone);
-        console.log(user.phone);
         div.innerHTML = `
           <div class="flex justify-between items-start mb-1">
-            <span class="font-bold text-slate-800">${user.phone}</span>
+            <span class="font-bold text-slate-800 relative">
+                ${user.phone}
+                ${hasNew ? '<span class="absolute -top-1 -right-3 w-2 h-2 bg-red-500 rounded-full"></span>' : ''}
+            </span>
             
             <span class="text-xs text-slate-400">${new Date(user.last_message_at).toLocaleDateString()}</span>
           </div>
           <div class="flex justify-between items-center">
              <span class="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full uppercase">${user.stage}</span>
+             ${hasNew ? '<span class="text-[10px] bg-green-100 text-green-700 px-1.5 rounded border border-green-200">New</span>' : ''}
           </div>
         `;
         container.appendChild(div);
@@ -814,24 +824,47 @@
       renderChatUsers(filtered);
     }
 
-    async function loadChatHistory(phone) {
+    // --- AUTO REFRESH LOGIC ---
+    // chatRefreshInterval is declared at top of script
+
+    function startAutoRefreshTimer() {
+        if (chatRefreshInterval) clearInterval(chatRefreshInterval);
+        chatRefreshInterval = setInterval(() => loadChatHistory(currentChatPhone, true), 5000);
+    }
+
+    function stopAutoRefresh() {
+        if (chatRefreshInterval) clearInterval(chatRefreshInterval);
+        chatRefreshInterval = null;
+    }
+
+    async function loadChatHistory(phone, isAuto = false) {
+      if (currentChatPhone !== phone) {
+          stopAutoRefresh();
+      }
+
       currentChatPhone = phone;
-      renderChatUsers(allChatUsers); // Re-render to update active state
+      if (!isAuto) renderChatUsers(allChatUsers); // Re-render to update active state
       
       // Update Header
       document.getElementById("chat-header").classList.remove("hidden");
       document.getElementById("chat-active-user").textContent = phone;
-      document.getElementById("chat-active-time").textContent = "Loading...";
+      if (!isAuto) document.getElementById("chat-active-time").textContent = "Loading...";
 
       // Show detail panel on mobile
-      if (window.innerWidth < 768) {
+      if (window.innerWidth < 768 && !isAuto) {
           document.getElementById('chat-list-panel').classList.add('hidden');
           document.getElementById('chat-detail-panel').classList.remove('hidden');
           document.getElementById('chat-detail-panel').classList.add('flex');
       }
 
       const container = document.getElementById("chat-messages");
-      container.innerHTML = '<div class="flex justify-center p-10"><div class="loader border-slate-300 border-t-blue-600"></div></div>';
+      
+      // Save scroll state
+      const wasAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 100;
+
+      if (!isAuto) {
+        container.innerHTML = '<div class="flex justify-center p-10"><div class="loader border-slate-300 border-t-blue-600"></div></div>';
+      }
 
       try {
         const token = localStorage.getItem("admin_token");
@@ -840,62 +873,79 @@
         });
         const messages = await res.json();
         
-        container.innerHTML = "";
+        // Build HTML string
+        let html = "";
         
         if (messages.length === 0) {
-           container.innerHTML = '<div class="p-10 text-center text-slate-400">No messages found for this user.</div>';
-           return;
+           html = '<div class="p-10 text-center text-slate-400">No messages found for this user.</div>';
+        } else {
+            let lastDate = null;
+            messages.forEach(msg => {
+              const isManualAdmin = msg.sender === 'admin';
+              const isBot = ['bot', 'admin_bulk'].includes(msg.sender);
+              const isRight = isManualAdmin || isBot;
+              
+              const time = new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              const date = new Date(msg.created_at).toLocaleDateString();
+
+              // Date separator
+              if (date !== lastDate) {
+                 html += `<div class="flex justify-center my-4"><span class="bg-slate-200 text-slate-600 text-xs px-3 py-1 rounded-full">${date}</span></div>`;
+                 lastDate = date;
+              }
+
+              let contentHtml = `<p class="whitespace-pre-wrap">${linkify(msg.message || "")}</p>`;
+              
+              if (msg.media_url) {
+                 const isImage = msg.media_url.match(/\.(jpeg|jpg|gif|png)$/i) != null;
+                 if (isImage) {
+                     contentHtml += `<div class="mt-2"><a href="${msg.media_url}" target="_blank"><img src="${msg.media_url}" class="w-full max-w-sm h-auto rounded-lg border border-slate-200 hover:opacity-90 transition"></a></div>`;
+                 } else {
+                     contentHtml += `<div class="mt-2"><a href="${msg.media_url}" target="_blank" class="text-blue-200 underline flex items-center gap-1">📎 Attachment</a></div>`;
+                 }
+              }
+
+              let bubbleClass = 'bg-white text-slate-800 border border-slate-200 rounded-bl-none';
+              let timeClass = 'text-slate-400';
+              
+              if (isManualAdmin) {
+                  bubbleClass = 'bg-green-600 text-white rounded-br-none';
+                  timeClass = 'text-green-100 opacity-75';
+              } else if (isBot) {
+                  bubbleClass = 'bg-blue-600 text-white rounded-br-none';
+                  timeClass = 'text-blue-100 opacity-75';
+              }
+
+              html += `
+                <div class="flex ${isRight ? 'justify-end' : 'justify-start'}">
+                    <div class="max-w-[75%] ${bubbleClass} rounded-2xl px-5 py-3 shadow-sm relative group">
+                      ${contentHtml}
+                      <p class="text-[10px] ${timeClass} text-right mt-1">${time}</p>
+                    </div>
+                </div>
+              `;
+            });
+        }
+        
+        container.innerHTML = html;
+
+        // Scroll logic
+        if (wasAtBottom || !isAuto) {
+            container.scrollTop = container.scrollHeight;
         }
 
-        let lastDate = null;
-
-        messages.forEach(msg => {
-          const isBot = msg.sender === 'bot';
-          const time = new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-          const date = new Date(msg.created_at).toLocaleDateString();
-
-          // Date separator
-          if (date !== lastDate) {
-             const dateDiv = document.createElement("div");
-             dateDiv.className = "flex justify-center my-4";
-             dateDiv.innerHTML = `<span class="bg-slate-200 text-slate-600 text-xs px-3 py-1 rounded-full">${date}</span>`;
-             container.appendChild(dateDiv);
-             lastDate = date;
-          }
-
-          const msgDiv = document.createElement("div");
-          msgDiv.className = `flex ${isBot ? 'justify-end' : 'justify-start'}`;
-          
-          let contentHtml = `<p class="whitespace-pre-wrap">${linkify(msg.message || "")}</p>`;
-          
-          if (msg.media_url) {
-             const isImage = msg.media_url.match(/\.(jpeg|jpg|gif|png)$/i) != null;
-             if (isImage) {
-                 contentHtml += `<div class="mt-2"><a href="${msg.media_url}" target="_blank"><img src="${msg.media_url}" class="w-full max-w-sm h-auto rounded-lg border border-slate-200 hover:opacity-90 transition"></a></div>`;
-             } else {
-                 contentHtml += `<div class="mt-2"><a href="${msg.media_url}" target="_blank" class="text-blue-200 underline flex items-center gap-1">📎 Attachment</a></div>`;
-             }
-          }
-
-          msgDiv.innerHTML = `
-            <div class="max-w-[75%] ${isBot ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white text-slate-800 border border-slate-200 rounded-bl-none'} rounded-2xl px-5 py-3 shadow-sm relative group">
-              ${contentHtml}
-              <p class="text-[10px] ${isBot ? 'text-blue-200' : 'text-slate-400'} text-right mt-1">${time}</p>
-            </div>
-          `;
-          container.appendChild(msgDiv);
-        });
-
-        // Scroll to bottom
-        container.scrollTop = container.scrollHeight;
         document.getElementById("chat-active-time").textContent = "Last updated: " + new Date().toLocaleTimeString();
-        const user = allChatUsers.find(u => u.phone === phone);
-        manualEnabled = user && user.stage === 'manual';
-        updateManualUI();
+        
+        if (!isAuto) {
+            const user = allChatUsers.find(u => u.phone === phone);
+            manualEnabled = user && user.stage === 'manual';
+            updateManualUI();
+            startAutoRefreshTimer();
+        }
 
       } catch (err) {
         console.error("Failed to load chat history:", err);
-        container.innerHTML = '<div class="p-10 text-center text-red-500">Failed to load messages.</div>';
+        if (!isAuto) container.innerHTML = '<div class="p-10 text-center text-red-500">Failed to load messages.</div>';
       }
     }
 
@@ -1596,6 +1646,69 @@
             btn.disabled = false;
         }
     }
+    // --- NOTIFICATIONS ---
+    let lastCheckedTime = localStorage.getItem("lastNotificationTime") || new Date().toISOString();
+    
+    // Poll every 10 seconds
+    setInterval(checkForNewMessages, 10000);
+    
+    async function checkForNewMessages() {
+        const token = localStorage.getItem("admin_token");
+        if (!token) return;
+        
+        try {
+             const res = await fetch(`${API_BASE}/chat/users`, { headers: { "Authorization": `Bearer ${token}` } });
+             const users = await res.json();
+             
+             // Check if any user has a message newer than lastCheckedTime
+             let newCount = 0;
+             let latestTime = lastCheckedTime;
+             
+             users.forEach(u => {
+                 if (u.last_message_at && new Date(u.last_message_at) > new Date(lastCheckedTime)) {
+                     newCount++;
+                     if (new Date(u.last_message_at) > new Date(latestTime)) {
+                         latestTime = u.last_message_at;
+                     }
+                 }
+             });
+             
+             if (newCount > 0) {
+                 showNotification(newCount);
+                 lastCheckedTime = latestTime;
+                 localStorage.setItem("lastNotificationTime", lastCheckedTime);
+                 
+                 // Also refresh user list if we are in chat tab
+                 if (!document.getElementById("tab-chat").classList.contains("hidden")) {
+                     allChatUsers = users;
+                     renderChatUsers(users);
+                 }
+             }
+        } catch(e) { console.error("Notification check failed", e); }
+    }
+    
+    function showNotification(count) {
+        const toast = document.getElementById("notification-toast");
+        toast.innerHTML = `
+            <div class="bg-white border-l-4 border-blue-600 rounded-lg shadow-xl p-4 flex items-start gap-3 min-w-[300px]">
+                <div class="text-2xl">🔔</div>
+                <div>
+                    <h4 class="font-bold text-slate-800">New Messages</h4>
+                    <p class="text-sm text-slate-600">You have ${count} new conversation update(s).</p>
+                </div>
+                <button onclick="this.closest('#notification-toast').classList.add('translate-x-full')" class="ml-auto text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+        `;
+        toast.classList.remove("translate-x-full");
+        
+        // Auto hide after 5 seconds
+        setTimeout(() => {
+            if(toast) toast.classList.add("translate-x-full");
+        }, 5000);
+    }
   </script>
+  <!-- Notification Toast -->
+  <div id="notification-toast" class="fixed top-4 right-4 z-50 transform transition-all duration-300 translate-x-full"></div>
+
 </body>
 </html>
